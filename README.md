@@ -12,17 +12,7 @@
 git clone https://github.com/allegro0132/Openwrt-mlnx-ofed.git
 ```
 
- 2. 亦或是添加下面代码到 openwrt 或lede源码根目录下的feeds.conf.default文件
- 
-```bash
-src-git allegro https://github.com/allegro0132/Openwrt-mlnx-ofed
-```
-并执行
-```bash
-./scripts/feeds update -a && ./scripts/feeds install -a
-```
-
- 3. make menuconfig 并在编译过程中取消"mlx5, mlx4", 选择"mlnx_ofed"
+ 2. make menuconfig 并在编译过程中取消"mlx5, mlx4", 选择"mlnx_ofed"
  
  * 说明
  - 倘若直接使用Mellanox提供的源码编译，在mlx5_core的编译过程中将会报错。我简单的修改了源码，在我的测试环境中能正常工作，但目前尚不明确改版驱动是否会导致问题。
