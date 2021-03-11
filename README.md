@@ -9,13 +9,17 @@
 
 
 ```bash
- git clone https://github.com/allegro0132/Openwrt-mlnx-ofed.git
+git clone https://github.com/allegro0132/Openwrt-mlnx-ofed.git
 ```
 
  2. 亦或是添加下面代码到 openwrt 或lede源码根目录下的feeds.conf.default文件
  
 ```bash
- src-git allegro https://github.com/allegro0132/Openwrt-mlnx-ofed
+src-git allegro https://github.com/allegro0132/Openwrt-mlnx-ofed
+```
+并执行
+```bash
+./scripts/feeds update -a && ./scripts/feeds install -a
 ```
 
  3. make menuconfig 并在编译过程中取消"mlx5, mlx4", 选择"mlnx_ofed"
