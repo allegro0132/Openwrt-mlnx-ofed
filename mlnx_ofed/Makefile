@@ -213,6 +213,9 @@ endef
 
 define Build/Compile
 	cd $(PKG_BUILD_DIR)/mlnx-of* ; \
+		ln -s ofed_scripts/configure; \
+		ln -s ofed_scripts/makefile; \
+		ln -s ofed_scripts/Makefile; \
 		./configure $(mlnx_CFGOPTS); \
 		$(MAKE) $(mlnx_MAKEOPTS) kernel
 endef
