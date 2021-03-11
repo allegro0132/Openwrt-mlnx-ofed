@@ -48,7 +48,7 @@ static struct tc_mirred to_mirred_compat(const struct tc_action *a)
 	struct sk_buff *skb;
 	struct nlattr *nla;
 
-	//if (!a->ops || !a->ops->dump || !is_tcf_mirred_compat(a)) Annotating for OpenWRT compatibility
+	//if (!a->ops || !a->ops->dump || !is_tcf_mirred_compat(a)) Modified as following
 	if (!a->ops || !is_tcf_mirred_compat(a))
 		return m;
 
@@ -56,7 +56,7 @@ static struct tc_mirred to_mirred_compat(const struct tc_action *a)
 	if (!skb)
 		return m;
 
-	//Annotating for OpenWRT compatibility
+	//Annotated it for OpenWRT's compatibility
 	//if (a->ops->dump(skb, (struct tc_action *) a, 0, 0) < 0)
 	//	goto freeskb;
 
