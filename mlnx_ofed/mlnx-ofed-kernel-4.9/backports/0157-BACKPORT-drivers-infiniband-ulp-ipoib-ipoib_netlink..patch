@@ -1,0 +1,69 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/ulp/ipoib/ipoib_netlink.c
+
+Change-Id: I6af972c98a5c6acaeb21763ac6bbd3ac6c26a55e
+---
+ drivers/infiniband/ulp/ipoib/ipoib_netlink.c | 23 ++++++++++++++++++++++-
+ 1 file changed, 22 insertions(+), 1 deletion(-)
+
+--- a/drivers/infiniband/ulp/ipoib/ipoib_netlink.c
++++ b/drivers/infiniband/ulp/ipoib/ipoib_netlink.c
+@@ -64,9 +64,14 @@ nla_put_failure:
+ 	return -EMSGSIZE;
+ }
+ 
++#if defined(HAVE_RTNL_LINK_OPS_NEWLINK_5_PARAMS)
+ static int ipoib_changelink(struct net_device *dev, struct nlattr *tb[],
+ 			    struct nlattr *data[],
+ 			    struct netlink_ext_ack *extack)
++#else
++static int ipoib_changelink(struct net_device *dev, struct nlattr *tb[],
++			    struct nlattr *data[])
++#endif
+ {
+ 	struct ipoib_dev_priv *priv = ipoib_priv(dev);
+ 	u16 mode, umcast;
+@@ -94,9 +99,17 @@ out_err:
+ 	return ret;
+ }
+ 
++#if defined(HAVE_RTNL_LINK_OPS_NEWLINK_5_PARAMS)
+ static int ipoib_new_child_link(struct net *src_net, struct net_device *dev,
+ 				struct nlattr *tb[], struct nlattr *data[],
+ 				struct netlink_ext_ack *extack)
++#elif defined(HAVE_RTNL_LINK_OPS_NEWLINK_4_PARAMS)
++static int ipoib_new_child_link(struct net *src_net, struct net_device *dev,
++				struct nlattr *tb[], struct nlattr *data[])
++#else
++static int ipoib_new_child_link(struct net_device *dev,
++				struct nlattr *tb[], struct nlattr *data[])
++#endif
+ {
+ 	struct net_device *pdev;
+ 	struct ipoib_dev_priv *ppriv;
+@@ -106,8 +119,12 @@ static int ipoib_new_child_link(struct n
+ 
+ 	if (!tb[IFLA_LINK])
+ 		return -EINVAL;
+-
++#ifdef HAVE_RTNL_LINK_OPS_NEWLINK_4_PARAMS
+ 	pdev = __dev_get_by_index(src_net, nla_get_u32(tb[IFLA_LINK]));
++#else
++	pdev = __dev_get_by_index(dev_net(dev), nla_get_u32(tb[IFLA_LINK]));
++#endif
++
+ 	if (!pdev || pdev->type != ARPHRD_INFINIBAND)
+ 		return -ENODEV;
+ 
+@@ -146,7 +163,11 @@ static int ipoib_new_child_link(struct n
+ 		goto out;
+ 
+ 	if (data) {
++#if defined(HAVE_RTNL_LINK_OPS_NEWLINK_5_PARAMS)
+ 		err = ipoib_changelink(dev, tb, data, extack);
++#else
++		err = ipoib_changelink(dev, tb, data);
++#endif
+ 		if (err) {
+ 			unregister_netdevice(dev);
+ 			return err;

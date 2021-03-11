@@ -1,0 +1,18 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/core/uverbs.h
+
+Change-Id: Ib933ada9ee9aea012c3908b64ebd41eeb15f9be7
+---
+ drivers/infiniband/core/uverbs.h | 1 -
+ 1 file changed, 1 deletion(-)
+
+--- a/drivers/infiniband/core/uverbs.h
++++ b/drivers/infiniband/core/uverbs.h
+@@ -183,7 +183,6 @@ struct ib_uverbs_file {
+ 	struct mutex umap_lock;
+ 	struct list_head umaps;
+ 	struct page *disassociate_page;
+-
+ 	struct xarray		idr;
+ };
+ 

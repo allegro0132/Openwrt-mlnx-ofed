@@ -1,0 +1,154 @@
+#!/usr/bin/perl
+#
+# Copyright (c) 2017 Mellanox Technologies. All rights reserved.
+#
+# This Software is licensed under one of the following licenses:
+#
+# 1) under the terms of the "Common Public License 1.0" a copy of which is
+#    available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/cpl.php.
+#
+# 2) under the terms of the "The BSD License" a copy of which is
+#    available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/bsd-license.php.
+#
+# 3) under the terms of the "GNU General Public License (GPL) Version 2" a
+#    copy of which is available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/gpl-license.php.
+#
+# Licensee has the right to choose one of the above licenses.
+#
+# Redistributions of source code must retain the above copyright
+# notice and one of the license notices.
+#
+# Redistributions in binary form must reproduce both the above copyright
+# notice, one of the license notices in the documentation
+# and/or other materials provided with the distribution.
+#
+
+my $got_if = 0;
+my $action = shift @ARGV;
+my $int = shift @ARGV;
+
+sub usage
+{
+	print "\n Usage: $0 <command> <network interface name>\n";
+	print "\n Command:";
+	print "\n\t get-bond-master        Get the name of the corresponding bonding interface";
+	print "\n\t get-mtu                Get the MTU of the interface";
+	print "\n";
+}
+
+sub get_netplan_config
+{
+	$ENV{PYTHONPATH}="/usr/share/netplan/netplan";
+	my $prog = <<'EOF';
+import sys
+import configmanager
+
+cm = configmanager.ConfigManager()
+cm.parse()
+
+command = sys.argv[1]
+if_name = sys.argv[2]
+
+if if_name not in cm.ethernets:
+    exit(2)
+
+eth = cm.ethernets[if_name]
+if command == 'get-mtu':
+    if 'mtu' in eth:
+        print(eth['mtu'])
+elif command == 'get-bond-master':
+    for bond_name in cm.bonds:
+        bond = cm.bonds[bond_name]
+        if if_name in bond['interfaces']:
+            print(bond_name)
+            break
+else:
+    exit(1)
+EOF
+	return system('python3', '-c', $prog, @_);
+}
+
+if ((-x '/usr/sbin/netplan') && (! -x '/sbin/ifup')) {
+	exit get_netplan_config($action, $int);
+}
+
+# set configuration files
+my @conf_files = ("/etc/network/interfaces");
+if (`grep -w source /etc/network/interfaces 2>/dev/null | grep -vE "^\\s*#" 2>/dev/null` ne "") {
+	# get absolute file paths
+	open(FD, "/etc/network/interfaces");
+	while (<FD>) {
+		next if (/\s*#/);
+		my $line = $_;
+		chomp $line;
+
+		my $ff = "";
+		if ($line =~ /^\s*(source)\s(.*)/) {
+			$ff = $2;
+		} else {
+			next;
+		}
+
+		# check if it's absolute path
+		if (-e "$ff") {
+			push(@conf_files, $ff);
+			next;
+		}
+
+		# check if it's relative path
+		if (`ls $ff 2>/dev/null` eq "") {
+			$ff = "/etc/network/$ff";
+		}
+
+		# support wildcards
+		for my $file (split(' ', `ls $ff 2>/dev/null`)) {
+			chomp $file;
+				if (-e "$file") {
+			        push(@conf_files, $file);
+			}
+		}
+	}
+	close(FD);
+}
+
+# check relevant conf files
+my $confs = join(" ", @conf_files);
+$confs = `grep -lw $int $confs 2>/dev/null`;
+
+for my $conf (split('\n', $confs)) {
+	open(FD, "$conf");
+	while (<FD>) {
+		next if (/\s*#/);
+		if (/^\s*(auto|iface)\s(.*)/) {
+			my $iface = (split ' ')[1];
+			$iface =~ s/ //g;
+			if ($got_if) {
+				$got_if = 0;
+			}
+			$got_if = 1 if ($iface eq $int);
+			next;
+		}
+
+		if ($action eq "get-bond-master") {
+			if ($got_if and /^\s*(bond-master)\s(.*)/) {
+				my $bond = $2;
+				$bond =~ s/ //g;
+				print "$bond\n";
+				exit 0;
+			}
+		} elsif ($action eq "get-mtu") {
+			if ($got_if and /^\s*(mtu)\s(.*)/) {
+				my $mtu = $2;
+				$mtu =~ s/ //g;
+				print "$mtu\n";
+				exit 0;
+			}
+		} else {
+			usage();
+			exit 1;
+		}
+	}
+}

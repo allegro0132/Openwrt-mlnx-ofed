@@ -1,0 +1,22 @@
+From: Yevgeny Kliteynik <kliteyn@mellanox.com>
+Subject: [PATCH] BACKPORT:
+ drivers/net/ethernet/mellanox/mlx5/core/steering/dr_send.c
+
+---
+ drivers/net/ethernet/mellanox/mlx5/core/steering/dr_send.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/steering/dr_send.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/steering/dr_send.c
+@@ -219,7 +219,11 @@ static void dr_destroy_qp(struct mlx5_co
+ 
+ static void dr_cmd_notify_hw(struct mlx5dr_qp *dr_qp, void *ctrl)
+ {
++#ifdef dma_wmb
+ 	dma_wmb();
++#else
++	wmb();
++#endif
+ 	*dr_qp->wq.sq.db = cpu_to_be32(dr_qp->sq.pc & 0xfffff);
+ 
+ 	/* After wmb() the hw aware of new work */

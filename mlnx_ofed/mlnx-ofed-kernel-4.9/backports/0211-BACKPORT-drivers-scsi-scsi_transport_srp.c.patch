@@ -1,0 +1,117 @@
+From: Sergey Gorenko <sergeygo@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/scsi/scsi_transport_srp.c
+
+Change-Id: Ifddd67dee3b26e786251962b86fa3025b832fe38
+---
+ drivers/scsi/scsi_transport_srp.c | 37 +++++++++++++++++++++++++++++++
+ 1 file changed, 37 insertions(+)
+
+--- a/drivers/scsi/scsi_transport_srp.c
++++ b/drivers/scsi/scsi_transport_srp.c
+@@ -5,6 +5,7 @@
+  * Copyright (C) 2007 FUJITA Tomonori <tomof@acm.org>
+  */
+ #include <linux/init.h>
++#include <linux/version.h>
+ #include <linux/module.h>
+ #include <linux/jiffies.h>
+ #include <linux/err.h>
+@@ -414,7 +415,11 @@ static void __rport_fail_io_fast(struct
+ 	 * calls before invoking i->f->terminate_rport_io().
+ 	 */
+ 	scsi_target_block(rport->dev.parent);
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 0) || defined(CONFIG_COMPAT_SCSI_TARGET_UNBLOCK)
+ 	scsi_target_unblock(rport->dev.parent, SDEV_TRANSPORT_OFFLINE);
++#else
++	scsi_target_unblock(rport->dev.parent);
++#endif
+ 
+ 	/* Involve the LLD if possible to terminate all I/O on the rport. */
+ 	i = to_srp_internal(shost->transportt);
+@@ -457,7 +462,11 @@ static void rport_dev_loss_timedout(stru
+ 
+ 	mutex_lock(&rport->mutex);
+ 	WARN_ON(srp_rport_set_state(rport, SRP_RPORT_LOST) != 0);
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 0) || defined(CONFIG_COMPAT_SCSI_TARGET_UNBLOCK)
+ 	scsi_target_unblock(rport->dev.parent, SDEV_TRANSPORT_OFFLINE);
++#else
++	scsi_target_unblock(rport->dev.parent);
++#endif
+ 	mutex_unlock(&rport->mutex);
+ 
+ 	i->f->rport_delete(rport);
+@@ -556,18 +565,31 @@ int srp_reconnect_rport(struct srp_rport
+ 
+ 		rport->failed_reconnects = 0;
+ 		srp_rport_set_state(rport, SRP_RPORT_RUNNING);
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 0) || defined(CONFIG_COMPAT_SCSI_TARGET_UNBLOCK)
+ 		scsi_target_unblock(&shost->shost_gendev, SDEV_RUNNING);
++#else
++		scsi_target_unblock(&shost->shost_gendev);
++#endif
+ 		/*
+ 		 * If the SCSI error handler has offlined one or more devices,
+ 		 * invoking scsi_target_unblock() won't change the state of
+ 		 * these devices into running so do that explicitly.
+ 		 */
++#ifdef HAVE_SCSI_DEVICE_STATE_MUTEX
+ 		shost_for_each_device(sdev, shost) {
+ 			mutex_lock(&sdev->state_mutex);
++#else
++		spin_lock_irq(shost->host_lock);
++		__shost_for_each_device(sdev, shost)
++#endif
+ 			if (sdev->sdev_state == SDEV_OFFLINE)
+ 				sdev->sdev_state = SDEV_RUNNING;
++#ifdef HAVE_SCSI_DEVICE_STATE_MUTEX
+ 			mutex_unlock(&sdev->state_mutex);
+ 		}
++#else
++		spin_unlock_irq(shost->host_lock);
++#endif
+ 	} else if (rport->state == SRP_RPORT_RUNNING) {
+ 		/*
+ 		 * srp_reconnect_rport() has been invoked with fast_io_fail
+@@ -575,12 +597,20 @@ int srp_reconnect_rport(struct srp_rport
+ 		 * failure timers if these had not yet been started.
+ 		 */
+ 		__rport_fail_io_fast(rport);
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 0) || defined(CONFIG_COMPAT_SCSI_TARGET_UNBLOCK)
+ 		scsi_target_unblock(&shost->shost_gendev,
+ 				    SDEV_TRANSPORT_OFFLINE);
++#else
++		scsi_target_unblock(&shost->shost_gendev);
++#endif
+ 		__srp_start_tl_fail_timers(rport);
+ 	} else if (rport->state != SRP_RPORT_BLOCKED) {
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 0) || defined(CONFIG_COMPAT_SCSI_TARGET_UNBLOCK)
+ 		scsi_target_unblock(&shost->shost_gendev,
+ 				    SDEV_TRANSPORT_OFFLINE);
++#else
++		scsi_target_unblock(&shost->shost_gendev);
++#endif
+ 	}
+ 	mutex_unlock(&rport->mutex);
+ 
+@@ -611,7 +641,11 @@ enum blk_eh_timer_return srp_timed_out(s
+ 	return rport && rport->fast_io_fail_tmo < 0 &&
+ 		rport->dev_loss_tmo < 0 &&
+ 		i->f->reset_timer_if_blocked && scsi_device_blocked(sdev) ?
++#ifdef HAVE_BLK_EH_DONE
+ 		BLK_EH_RESET_TIMER : BLK_EH_DONE;
++#else
++		BLK_EH_RESET_TIMER : BLK_EH_NOT_HANDLED;
++#endif
+ }
+ EXPORT_SYMBOL(srp_timed_out);
+ 
+@@ -895,6 +929,9 @@ static void __exit srp_transport_exit(vo
+ MODULE_AUTHOR("FUJITA Tomonori");
+ MODULE_DESCRIPTION("SRP Transport Attributes");
+ MODULE_LICENSE("GPL");
++#ifdef RETPOLINE_MLNX
++MODULE_INFO(retpoline, "Y");
++#endif
+ 
+ module_init(srp_transport_init);
+ module_exit(srp_transport_exit);

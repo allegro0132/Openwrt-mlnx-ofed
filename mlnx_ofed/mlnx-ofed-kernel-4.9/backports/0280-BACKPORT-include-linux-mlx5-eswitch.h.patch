@@ -1,0 +1,21 @@
+From: Dmytro Linkin <dmitrolin@mellanox.com>
+Subject: [PATCH] BACKPORT: include/linux/mlx5/eswitch.h
+
+Change-Id: I22319d195d7cfff4e42cfc802c3fcd4e651ce518
+---
+ include/linux/mlx5/eswitch.h | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+--- a/include/linux/mlx5/eswitch.h
++++ b/include/linux/mlx5/eswitch.h
+@@ -93,8 +93,8 @@ u8 mlx5_eswitch_mode(struct mlx5_eswitch
+ static inline u8 mlx5_eswitch_mode(struct mlx5_eswitch *esw){ return MLX5_ESWITCH_NONE; }
+ static inline u16 mlx5_eswitch_get_encap_mode(struct mlx5_eswitch *esw) { return 0; }
+ static inline u32 mlx5_eswitch_vport_match_metadata_enabled(struct mlx5_eswitch *esw) { return 0; }
+-static bool mlx5_eswitch_is_manager_vport(const struct mlx5_eswitch *esw,
+-					  u16 vport_num)
++static inline bool mlx5_eswitch_is_manager_vport(const struct mlx5_eswitch *esw,
++					         u16 vport_num)
+ {
+ 	return false;
+ }

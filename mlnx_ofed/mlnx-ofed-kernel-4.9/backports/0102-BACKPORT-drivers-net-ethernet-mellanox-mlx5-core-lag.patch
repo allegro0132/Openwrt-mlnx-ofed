@@ -1,0 +1,19 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx5/core/lag_mp.h
+
+Change-Id: Ia0230742a3ca4ebbbb99e9050c041b3405ea778e
+---
+ drivers/net/ethernet/mellanox/mlx5/core/lag_mp.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/lag_mp.h
++++ b/drivers/net/ethernet/mellanox/mlx5/core/lag_mp.h
+@@ -14,7 +14,7 @@ struct lag_mp {
+ 	struct workqueue_struct   *wq;
+ };
+ 
+-#ifdef CONFIG_MLX5_ESWITCH
++#if defined(CONFIG_MLX5_ESWITCH) && defined(HAVE_FIB_NH_NOTIFIER_INFO)
+ 
+ int mlx5_lag_mp_init(struct mlx5_lag *ldev);
+ void mlx5_lag_mp_cleanup(struct mlx5_lag *ldev);

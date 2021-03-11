@@ -1,0 +1,28 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/sw/rxe/rxe_req.c
+
+Change-Id: Ic6b36a9b3d97f8f7d1f91fa642250fb4d89a013a
+---
+ drivers/infiniband/sw/rxe/rxe_req.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+--- a/drivers/infiniband/sw/rxe/rxe_req.c
++++ b/drivers/infiniband/sw/rxe/rxe_req.c
+@@ -121,9 +121,17 @@ static void req_retry(struct rxe_qp *qp)
+ 	}
+ }
+ 
++#ifdef HAVE_TIMER_SETUP
+ void rnr_nak_timer(struct timer_list *t)
++#else
++void rnr_nak_timer(unsigned long data)
++#endif
+ {
++#ifdef HAVE_TIMER_SETUP
+ 	struct rxe_qp *qp = from_timer(qp, t, rnr_nak_timer);
++#else
++	struct rxe_qp *qp = (struct rxe_qp *)data;
++#endif
+ 
+ 	pr_debug("qp#%d rnr nak timer fired\n", qp_num(qp));
+ 	rxe_run_task(&qp->req.task, 1);

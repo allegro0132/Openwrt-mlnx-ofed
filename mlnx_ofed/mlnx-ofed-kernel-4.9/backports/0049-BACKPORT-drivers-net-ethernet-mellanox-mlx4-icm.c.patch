@@ -1,0 +1,58 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx4/icm.c
+
+Change-Id: Ibdaf982258024af5b353ac7cf12f52aaba67788d
+---
+ drivers/net/ethernet/mellanox/mlx4/icm.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+--- a/drivers/net/ethernet/mellanox/mlx4/icm.c
++++ b/drivers/net/ethernet/mellanox/mlx4/icm.c
+@@ -180,8 +180,10 @@ struct mlx4_icm *mlx4_alloc_icm(struct m
+ 			--cur_order;
+ 
+ 		mask = gfp_mask;
++#ifdef HAS_GFP_DIRECT_RECLAIM
+ 		if (cur_order)
+ 			mask &= ~__GFP_DIRECT_RECLAIM;
++#endif
+ 
+ 		if (coherent)
+ 			ret = mlx4_alloc_icm_coherent(&dev->persist->pdev->dev,
+@@ -255,7 +257,12 @@ int mlx4_UNMAP_ICM_AUX(struct mlx4_dev *
+ 			MLX4_CMD_TIME_CLASS_B, MLX4_CMD_NATIVE);
+ }
+ 
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ int mlx4_table_get(struct mlx4_dev *dev, struct mlx4_icm_table *table, u32 obj)
++#else
++int mlx4_table_get(struct mlx4_dev *dev, struct mlx4_icm_table *table, u32 obj,
++		   gfp_t gfp)
++#endif
+ {
+ 	u32 i = (obj & (table->num_obj - 1)) /
+ 			(MLX4_TABLE_CHUNK_SIZE / table->obj_size);
+@@ -269,7 +276,11 @@ int mlx4_table_get(struct mlx4_dev *dev,
+ 	}
+ 
+ 	table->icm[i] = mlx4_alloc_icm(dev, MLX4_TABLE_CHUNK_SIZE >> PAGE_SHIFT,
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 				       (table->lowmem ? GFP_KERNEL : GFP_HIGHUSER) |
++#else
++				       (table->lowmem ? gfp : GFP_HIGHUSER) |
++#endif
+ 				       __GFP_NOWARN, table->coherent);
+ 	if (!table->icm[i]) {
+ 		ret = -ENOMEM;
+@@ -387,7 +398,11 @@ int mlx4_table_get_range(struct mlx4_dev
+ 	u32 i;
+ 
+ 	for (i = start; i <= end; i += inc) {
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 		err = mlx4_table_get(dev, table, i);
++#else
++		err = mlx4_table_get(dev, table, i, GFP_KERNEL);
++#endif
+ 		if (err)
+ 			goto fail;
+ 	}

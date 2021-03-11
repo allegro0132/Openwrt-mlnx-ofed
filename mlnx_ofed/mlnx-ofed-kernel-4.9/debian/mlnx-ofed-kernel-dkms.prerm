@@ -1,0 +1,35 @@
+#!/bin/sh
+set -e
+
+# Get the package version
+NAME=mlnx-ofed-kernel
+PACKAGE_NAME=$NAME-dkms
+VERSION=`dpkg-query -W -f='${Version}' $PACKAGE_NAME | awk -F "-" '{print $1}' | cut -d\: -f2`
+
+case "$1" in
+    remove|upgrade|deconfigure)
+      if [  "`dkms status -m $NAME`" ]; then
+         dkms remove -m $NAME -v $VERSION --all || true
+      fi
+    ;;
+
+    failed-upgrade)
+    ;;
+
+    *)
+        echo "prerm called with unknown argument \`$1'" >&2
+        exit 1
+    ;;
+esac
+
+echo "Cleaning up '/usr/src/ofa_kernel/' ..."
+# we might have hidden files or so...
+# so, remove it and recreate it so that dpkg can remove it cleanly
+if [ -e /usr/src/ofa_kernel ]; then
+	/bin/rm -rf /usr/src/ofa_kernel
+	mkdir -p /usr/src/ofa_kernel
+fi
+
+#DEBHELPER#
+
+exit 0

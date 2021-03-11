@@ -1,0 +1,24 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx5/core/alloc.c
+
+Change-Id: I26776a5d3071570651fbcfae75d8043398103c6c
+---
+ drivers/net/ethernet/mellanox/mlx5/core/alloc.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/alloc.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/alloc.c
+@@ -72,8 +72,11 @@ static void *mlx5_dma_zalloc_coherent_no
+ 	mutex_lock(&priv->alloc_mutex);
+ 	original_node = dev_to_node(device);
+ 	set_dev_node(device, node);
+-	cpu_handle = dma_alloc_coherent(device, size, dma_handle,
+-					GFP_KERNEL);
++#ifdef HAVE_DMA_ZALLOC_COHERENT
++	cpu_handle = dma_zalloc_coherent(device, size, dma_handle, GFP_KERNEL);
++#else
++	cpu_handle = dma_alloc_coherent(device, size, dma_handle, GFP_KERNEL);
++#endif
+ 	set_dev_node(device, original_node);
+ 	mutex_unlock(&priv->alloc_mutex);
+ 	return cpu_handle;

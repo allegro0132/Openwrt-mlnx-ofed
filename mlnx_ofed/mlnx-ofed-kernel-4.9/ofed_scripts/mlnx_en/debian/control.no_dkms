@@ -1,0 +1,19 @@
+Source: mlnx-en
+Section: net
+Priority: optional
+Maintainer: Alaa Hleihel <alaa@mellanox.com>
+Build-Depends: debhelper (>= 8.0.0), autotools-dev, bzip2, make
+Standards-Version: 3.9.2
+Homepage: http://www.mellanox.com/page/products_dyn?product_family=26&mtag=linux_sw_drivers
+
+Package: mlnx-en-utils
+Architecture: any
+Depends: ${misc:Depends}, coreutils, pciutils, grep, perl, procps, module-init-tools | kmod
+Description: Userspace tools to restart and tune mlnx-ofed kernel modules
+
+Package: mlnx-en-modules
+Section: kernel
+Architecture: all
+Depends: ${misc:Depends}, coreutils, pciutils, grep, perl, procps, module-init-tools | kmod, mlnx-en-utils
+Description: mlnx-en kernel modules
+ This package provides the the binary mlnx-en kernel modules.

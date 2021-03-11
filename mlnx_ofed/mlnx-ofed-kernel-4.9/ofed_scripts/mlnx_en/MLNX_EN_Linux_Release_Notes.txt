@@ -1,0 +1,274 @@
+Mellanox Technologies
+=====================
+
+===============================================================================
+                   MLNX_EN for Linux Release Notes
+        Driver Kit for Mellanox ConnectX-3 EN Adapter Cards
+                         with 10GigE Support 
+                      Rev 1.5.10, January 2013
+===============================================================================
+
+
+-------------------------------------------------------------
+NOTE:
+
+THIS HARDWARE, SOFTWARE OR TEST SUITE PRODUCT (PRODUCT(S)) 
+AND ITS RELATED DOCUMENTATION ARE PROVIDED BY MELLANOX 
+TECHNOLOGIES AS-IS WITH ALL FAULTS OF ANY KIND AND SOLELY 
+FOR THE PURPOSE OF AIDING THE CUSTOMER IN TESTING APPLICATIONS 
+THAT USE THE PRODUCTS IN DESIGNATED SOLUTIONS. THE CUSTOMER'S 
+MANUFACTURING TEST ENVIRONMENT HAS NOT MET THE STANDARDS SET 
+BY MELLANOX TECHNOLOGIES TO FULLY QUALIFY THE PRODUCTO(S) 
+AND/OR THE SYSTEM USING IT. THEREFORE, MELLANOX TECHNOLOGIES 
+CANNOT AND DOES NOT GUARANTEE OR WARRANT THAT THE PRODUCTS 
+WILL OPERATE WITH THE HIGHEST QUALITY. ANY EXPRESS OR IMPLIED 
+WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED 
+WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR 
+PURPOSE AND NONINFRINGEMENT ARE DISCLAIMED. IN NO EVENT SHALL 
+MELLANOX BE LIABLE TO CUSTOMER OR ANY THIRD PARTIES FOR ANY 
+DIRECT, INDIRECT, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+OF ANY KIND (INCLUDING, BUT NOT LIMITED TO, PAYMENT FOR 
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, 
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND 
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT 
+LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING 
+IN ANY WAY FROM THE USE OF THE PRODUCT(S) AND RELATED 
+DOCUMENTATION EVEN IF ADVISED OF THE POSSIBILITY OF SUCH 
+DAMAGE.
+
+--------------------------------------------------------------
+© Copyright 2013. Mellanox Technologies. All rights reserved. 
+
+Mellanox®, Mellanox Logo®, BridgeX®, ConnectX®, CORE-Direct®, 
+InfiniBridge®, InfiniHost®, InfiniScale®, PhyX®, SwitchX®, 
+Virtual Protocol Interconnect® and Voltaire® 
+are registered trademarks of Mellanox Technologies, Ltd.
+
+Connect-IB™, FabricIT™, MLNX-OS™, MetroX™, ScalableHPC™, 
+Unbreakable-Link™, UFM™ and Unified Fabric Manager™ 
+are trademarks of Mellanox Technologies, Ltd. 
+
+All other trademarks are property of their respective owners.
+
+
+
+Contents:
+=========
+1. Introduction
+2. Supported Platforms, Operating Systems and Firmware
+3. Changes and New Features
+4. Bug Fixes
+5. Known Issues
+6. Network Tuning
+
+===============================================================================
+1. Introduction
+===============================================================================
+These are the release notes for Mellanox Technologies' MLNX_EN for Linux
+version 1.5.10 driver kit for Mellanox adapter cards with 10GigE support.
+
+===============================================================================
+2. Supported Platforms, Operating Systems and Firmware
+===============================================================================
+  o   CPU architectures:
+        - x86_64
+
+  o   HW:
+	- Winterfell servers
+	- Dragonstone servers
+
+  o   Cards:
+	- Harrier 2G
+	- Harrier 3G
+
+  o   Linux Operating Systems:
+	- CentOS5.2 + 2.6.38fbk32
+	- CentOS5.2 + 3.2.18fbk11
+    
+  o   Supported Firmware
+    	- 2.10.3898 or higher verified for Facebook 
+
+===============================================================================
+3. Changes and New Features
+===============================================================================
+3.1 Changes in Rev 1.5.10 From Rev 1.5.9
+-------------------------------------------
+1.  Bug fixes
+
+3.2 Changes in Rev 1.5.9 From Rev 1.5.8.3
+-------------------------------------------
+1.  Added support for kernel.org 3.5
+2.  Improved latency by optimizing RX repost mechanism
+
+3.3 Changes in Rev 1.5.8.3 From Rev 1.5.8.2
+-------------------------------------------
+1.  Added support for RHEL6.3
+
+3.4 Changes in Rev 1.5.8.2 From Rev 1.5.7.2
+-------------------------------------------
+1.  Added support for new kernels: 3.1, 3.2, 3.3.
+2.  Moved to interrupt mode to handle TX completions.
+3.  Added support for Ethtool. 
+4.  Optimized Numa aware memory allocations.
+5.  Optimized interrupt usage for TX/RX completions.
+6.  Added KMP compliant installation process.
+7.  Added irq affinity control scripts (please see README file for more
+    details).
+
+3.5 Changes in Rev 1.5.7.2 From Rev 1.5.7
+-------------------------------------------
+1.  Added support for new OS's: RHEL6.2, RHEL5.8, SLES11SP2
+2.  Added recording RX queue for GRO packets.
+3.  Added the usage of Toeplitz hash function for RSS calculation.
+4.  Enabled RXHASH report on supported systems
+
+3.6 Changes in Rev 1.5.7 From Rev 1.5.6
+-----------------------------------------
+1.  Added support for new OS's: RHEL6.1, RHEL5.5, RHEL5.7, kernel.org
+    (2.6.37, 2.6.38, 2.6.39, 3.0).
+2.  Added support for RHEL6.1 kvm
+3.  Improved performance on PPC systems (Using GRO where LRO is not efficient)
+4.  Added IPv6 support to LRO.
+5.  Incremented number of TX and RX queues
+6.  Enabled NAPI usage at any given time
+7.  Enabled TX completions spread among multiple MSI-X vectors.
+8.  Improved small packets packet rate.
+9.  Added 40GigE support (including ethtool report).
+10. Added NUMA support.
+11. Added general performance improvements.
+
+3.7 Changes in Rev 1.5.6 From Rev 1.5.1.3
+-----------------------------------------
+1.  Added support for new OS's: RHEL6.0, RHEL5.6, SLES11SP1, kernel.org
+    (2.6.35, 2.6.36).
+2.  Added blue flame support for kernels > 2.6.28 (improves TX latency by 0.4 usec)
+3.  Added RX acceleration feature that supports recvmsg and recvmmsg system calls
+    See MLNX_EN_Linux_README for further details.
+4.  Added exact match multicast filtering
+5.  Added option to use interrupts for TX completion (polling is the default)
+6.  Added option to disable NAPI (enabled by default)
+7.  Added support for control number of RX rings from module parameter.
+8.  Added interrupt vector per each RX ring. See /proc/interrupts.
+9.  Link is brought up upon driver load.
+10. Adaptive moderation improvements.
+11. Added system tuning option to achieve better performance (idle loop polling).
+11. Added hardware revision report via Ethtool.
+
+3.8 Changes in Rev 1.5.1.3 From Rev 1.4.2
+-----------------------------------------
+1. Support for new Operating Systems: RedHat EL5 Update5;
+   Kernel.org: 2.6.16 up to 2.6.32 (partial testing)
+2. Added UDP RSS support (on ConnectX-2 HW only).
+3. Improved VLAN tagging performance.
+4. Ethtool -e support.
+
+===============================================================================
+4. Bug Fixes
+===============================================================================
+4.1 Bug Fixes in Rev 1.5.10
+-----------------------------
+1. Fixed driver unloading after installation. 
+   Currently, the driver is reloaded after installation
+2. Fixed an issue related to the configuration files. 
+   Configuration files are no longer modified.
+3. Fixed MTU size calculation
+4. Fixed race in join/leave multicast group flow
+5. Restored RX buffer pointer in case of failure
+6. Fixed IPMI
+7. Fixed BlueFlame race
+8. Added sanity check for module parameters
+9. Fixed lost of connectivity bug for iperf long run
+
+4.2 Bug Fixes in Rev 1.5.9
+-----------------------------
+1. Fixed bad TX completion notification request logic, could lead to TX timeout
+2. Fixed PowerPC connectivity loss
+
+4.3 Bug Fixes in Rev 1.5.8.3
+-----------------------------
+1. Fixed possible transmit timeout under heavy traffic load.
+
+4.4 Bug Fixes in Rev 1.5.8.2
+-----------------------------
+1. Fixed error flows in case of MSI-X assignment failures.
+2. Fixed loss of multicast traffic during addition of multicast addresses.
+3. Enabled legal MTU configuration prior to interface bring-up.
+
+4.5 Bug Fixes in Rev 1.5.7.2
+------------------------------
+1. Fixed WoL configuration behavior for single ported devices.
+2. Fixed the assignment of valid flow control parameters during interface initialization
+3. Fixed qdisc behavior when transmitting packets with VLAN ID 0.
+4. Fixed badly placed counters on ethool -S report.
+
+4.6 Bug Fixes in Rev 1.5.7
+----------------------------
+1. Fixed the crash occurred during initialization if an invalid mac address
+   was burned on the card.
+2. Fixed a bug where interface link state was not updated correctly in certain scenarios.
+3. Fixed a crash occurred when LRO enabled via ethtool but disabled in module parameter.
+4. Fixed a warning when using netconsole.
+5. Fixed a crash occurred during driver initialization due to multicast list update.
+
+4.7 Bug Fixes in Rev 1.5.6
+----------------------------
+1. Fixed a bug that caused the driver not to work with MSI-X on RedHat EL4 systems.
+2. Fixed the driver functionality in case the device is enslaved to bond with VLANs over it.
+3. Fixed the crash occurred when sending malformed TCP packets.
+
+4.8 Bug Fixes in Rev 1.5.1.3
+------------------------------
+1. If the two ports of a ConnectX/ConnectX-2 device are bonded together and one
+   port is closed, then the other port will cease carrying traffic. Fixed in
+   this release.
+2. Multiple error messages when working under bonding on some operating
+   systems.
+
+4.9 Bug Fixes in Rev 1.4.2
+----------------------------
+1. Fixed a bug avoiding the driver to work with MSI-X on RedHat EL4 systems.
+2. Enabled the driver to load on systems with 32 cores and higher.
+3. The driver is being stuck if the HW/FW stops responding, reset is done
+   instead.
+4. Fixed recovery flows from memory allocation failures.
+5. Corrected checksum reports on SLES11 systems.
+6. When the system is low on memory, the driver now allocates smaller RX rings.
+7. The driver now retries to obtain MSI-X vectors if the initial request is
+   rejected by the OS.
+
+===============================================================================
+5. Known Issues
+===============================================================================
+
+1. Driver does not load by default during boot on SLES10SPx systems.
+   Workaround: 
+   Edit the /etc/sysconfig/kernel file. 
+   Set: MODULES_LOADED_ON_BOOT="mlx4_en"
+2. When an iSCSI target is working over the mlnx_en driver, LRO should be 
+   disabled by adding the following line to /etc/modprobe.conf:
+   "options mlx4_en num_lro=0" 
+3. When creating port configuration files using YAST on SLES systems,
+   not all (or no) mlx4_en network interfaces are recognized by the tool.
+   The interface configuration needs to be added as a new interface. Also the
+   MAC address needs to be set manually.
+4. VLAN double-tagging is not supported in this release.
+5. When an interface is released from bonding in RH5.*, a crash may occur due
+   to a bug in the bonding module.
+   For more info see https://bugzilla.redhat.com/show_bug.cgi?id=659594.
+6. Module unload while interfaces are under bond is not supported.
+7. Legacy interrupt mode is not supported, therefore msi_x module parameter
+   cannot be set to 0.
+8. If you encounter any problem when loading the mlx4_core/mlx4_en module with
+   custom parameters please check dmesg.
+   
+6. Network Tuning
+==================
+MLNX_EN installation changes several default network parameters in order to
+achieve optimized networking performance in terms of high throughput, low
+latency and low CPU utilization. These parameters are changed through the
+'sysctl' interface.
+In order to restore these parameters to their default values, download the
+"mlnx_en_reverse_settings.conf" file from the MLNX_EN for Linux Web page
+http://www.mellanox.com/content/pages.php?pg=products_dyn&product_family=27&menu_section=35
+and run:
+ > /sbin/sysctl -p mlnx_en_reverse_settings.conf

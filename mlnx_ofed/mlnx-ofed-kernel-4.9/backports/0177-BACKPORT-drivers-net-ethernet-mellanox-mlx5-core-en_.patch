@@ -1,0 +1,32 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT:
+ drivers/net/ethernet/mellanox/mlx5/core/en_accel/en_accel.h
+
+Change-Id: I2ab867e893bb386efb2171292749ceaed1eecd6b
+---
+ drivers/net/ethernet/mellanox/mlx5/core/en_accel/en_accel.h | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en_accel/en_accel.h
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en_accel/en_accel.h
+@@ -124,9 +124,10 @@ mlx5e_accel_handle_tx(struct sk_buff *sk
+ 			return NULL;
+ 	}
+ #endif
+-
++#ifdef HAVE_NETIF_F_GSO_UDP_L4 
+ 	if (skb_is_gso(skb) && skb_shinfo(skb)->gso_type & SKB_GSO_UDP_L4)
+ 		mlx5e_udp_gso_handle_tx_skb(skb);
++#endif
+ 
+ 	return skb;
+ }
+@@ -137,7 +138,7 @@ mlx5e_accel_handle_rx(struct net_device
+ 		      struct mlx5_cqe64 *cqe,
+ 		      u32 *cqe_bcnt)
+ {
+-#ifdef CONFIG_MLX5_EN_TLS
++#if  defined(CONFIG_MLX5_EN_TLS) && defined(HAVE_TLS_OFFLOAD_RX_RSYNC_REQUEST)
+ 	mlx5e_tls_handle_rx_skb(dev, skb, cqe_bcnt);
+ #endif
+ 

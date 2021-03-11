@@ -1,0 +1,229 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx5/core/en_sysfs.c
+
+Change-Id: I9505c5a10f01fbd84a0700321954076b41357699
+---
+ drivers/net/ethernet/mellanox/mlx5/core/en_sysfs.c | 61 +++++++++++++++++++++-
+ 1 file changed, 60 insertions(+), 1 deletion(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en_sysfs.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en_sysfs.c
+@@ -32,12 +32,15 @@
+ 
+ #include <linux/device.h>
+ #include <linux/netdevice.h>
++#include <linux/dcbnl.h>
+ #include "en.h"
+ #include "en_ecn.h"
+ #include "eswitch.h"
++#ifdef HAVE_IEEE_DCBNL_ETS
+ #ifdef CONFIG_MLX5_CORE_EN_DCB
+ #include "en/port_buffer.h"
+ #endif
++#endif
+ 
+ #define MLX5E_SKPRIOS_NUM   16
+ #define MLX5E_GBPS_TO_KBPS 1000000
+@@ -45,6 +48,15 @@
+ #define set_kobj_mode(mdev) mlx5_core_is_pf(mdev) ? S_IWUSR | S_IRUGO : S_IRUGO
+ 
+ #ifdef CONFIG_MLX5_EN_SPECIAL_SQ
++#if !defined(HAVE_NETDEV_QUEUE_SYSFS) || defined(HAVE_NETDEV_QUEUE_SYSFS_ATTRIBUTE)
++struct netdev_queue_attribute {
++	struct attribute attr;
++	ssize_t (*show)(struct netdev_queue *queue,
++	    struct netdev_queue_attribute *attr, char *buf);
++	ssize_t (*store)(struct netdev_queue *queue,
++	    struct netdev_queue_attribute *attr, const char *buf, size_t len);
++};
++#else
+ struct netdev_queue_attribute {
+         struct attribute attr;
+         ssize_t (*show)(struct netdev_queue *queue, char *buf);
+@@ -52,7 +64,9 @@ struct netdev_queue_attribute {
+                          const char *buf, size_t len);
+ };
+ #endif
++#endif
+ 
++#if defined(HAVE_NETDEV_GET_NUM_TC) && defined(HAVE_NETDEV_SET_NUM_TC)
+ static ssize_t mlx5e_show_tc_num(struct device *device,
+ 				 struct device_attribute *attr,
+ 				 char *buf)
+@@ -72,7 +86,9 @@ static ssize_t mlx5e_store_tc_num(struct
+ {
+ 	struct mlx5e_priv *priv = netdev_priv(to_net_dev(device));
+ 	struct net_device *netdev = priv->netdev;
++#if defined(HAVE_NDO_SETUP_TC_TAKES_TC_SETUP_TYPE) || defined(HAVE_NDO_SETUP_TC_RH_EXTENDED)
+ 	struct tc_mqprio_qopt mqprio = { 0 };
++#endif
+ 	int tc_num;
+ 	int err = 0;
+ 
+@@ -82,11 +98,16 @@ static ssize_t mlx5e_store_tc_num(struct
+ 		return -EINVAL;
+ 
+ 	rtnl_lock();
++#if defined(HAVE_NDO_SETUP_TC_TAKES_TC_SETUP_TYPE) || defined(HAVE_NDO_SETUP_TC_RH_EXTENDED)
+ 	mqprio.num_tc = tc_num;
+ 	mlx5e_setup_tc_mqprio(netdev, &mqprio);
++#else
++	mlx5e_setup_tc(netdev, tc_num);
++#endif
+ 	rtnl_unlock();
+ 	return count;
+ }
++#endif
+ 
+ static  ssize_t mlx5e_show_maxrate(struct device *device,
+ 				   struct device_attribute *attr,
+@@ -195,8 +216,10 @@ out:
+ 
+ static DEVICE_ATTR(maxrate, S_IRUGO | S_IWUSR,
+ 		   mlx5e_show_maxrate, mlx5e_store_maxrate);
++#if defined(HAVE_NETDEV_GET_NUM_TC) && defined(HAVE_NETDEV_SET_NUM_TC)
+ static DEVICE_ATTR(tc_num, S_IRUGO | S_IWUSR,
+ 		   mlx5e_show_tc_num, mlx5e_store_tc_num);
++#endif
+ 
+ static ssize_t mlx5e_show_lro_timeout(struct device *device,
+ 				      struct device_attribute *attr,
+@@ -819,6 +842,7 @@ static void mlx5e_remove_attributes(stru
+ 	}
+ }
+ 
++#ifdef HAVE_IEEE_DCBNL_ETS
+ #ifdef CONFIG_MLX5_CORE_EN_DCB
+ static ssize_t mlx5e_show_prio2buffer(struct device *device,
+ 				      struct device_attribute *attr,
+@@ -961,7 +985,9 @@ static ssize_t mlx5e_store_buffer_size(s
+ 	return count;
+ }
+ #endif
++#endif
+ 
++#ifdef HAVE_IEEE_DCBNL_ETS
+ #ifdef CONFIG_MLX5_CORE_EN_DCB
+ static DEVICE_ATTR(buffer_size, S_IRUGO | S_IWUSR,
+ 		   mlx5e_show_buffer_size,
+@@ -971,6 +997,7 @@ static DEVICE_ATTR(prio2buffer, S_IRUGO
+ 		   mlx5e_show_prio2buffer,
+ 		   mlx5e_store_prio2buffer);
+ #endif
++#endif
+ 
+ #ifdef CONFIG_MLX5_ESWITCH
+ static DEVICE_ATTR(vf_roce, S_IRUGO | S_IWUSR,
+@@ -1002,10 +1029,22 @@ static ssize_t mlx5e_store_force_local_l
+ 	struct mlx5_core_dev *mdev = priv->mdev;
+ 	bool disable;
+ 	int err;
++#ifndef HAVE_KSTRTOBOOL
++	int udata;
+ 
++	err = sscanf(buf, "%d", &udata);
++	if (err != 1)
++		return -EINVAL;
++
++	if (udata >> 1)
++		return -EINVAL;
++
++	disable = udata ? true : false;
++#else
+ 	err = kstrtobool(buf, &disable);
+ 	if (err)
+ 		return -EINVAL;
++#endif
+ 
+ 	if (mdev->local_lb.user_force_disable != disable) {
+ 		mdev->local_lb.user_force_disable = disable;
+@@ -1038,7 +1077,9 @@ static struct attribute *mlx5e_debug_gro
+ };
+ 
+ static struct attribute *mlx5e_qos_attrs[] = {
++#if defined(HAVE_NETDEV_GET_NUM_TC) && defined(HAVE_NETDEV_SET_NUM_TC)
+ 	&dev_attr_tc_num.attr,
++#endif
+ 	&dev_attr_maxrate.attr,
+ 	NULL,
+ };
+@@ -1089,6 +1130,7 @@ static int update_qos_sysfs(struct net_d
+ {
+ 	int err = 0;
+ 
++#ifdef HAVE_IEEE_DCBNL_ETS
+ #ifdef CONFIG_MLX5_CORE_EN_DCB
+ 	if (MLX5_BUFFER_SUPPORTED(mdev)) {
+ 		err = sysfs_add_file_to_group(&dev->dev.kobj,
+@@ -1099,6 +1141,7 @@ static int update_qos_sysfs(struct net_d
+ 					      "qos");
+ 	}
+ #endif
++#endif
+ 
+ 	return err;
+ }
+@@ -1172,6 +1215,8 @@ int mlx5e_sysfs_create(struct net_device
+ 	if (err)
+ 		goto remove_debug_group;
+ 
++	mlx5_eswitch_compat_sysfs_init(dev);
++
+ 	return 0;
+ 
+ remove_debug_group:
+@@ -1196,6 +1241,8 @@ void mlx5e_sysfs_remove(struct net_devic
+ 	struct mlx5e_priv *priv = netdev_priv(dev);
+ 	int i;
+ 
++	mlx5_eswitch_compat_sysfs_cleanup(dev);
++
+ 	sysfs_remove_group(&dev->dev.kobj, &qos_group);
+ 	sysfs_remove_group(&dev->dev.kobj, &debug_group);
+ 	sysfs_remove_group(&dev->dev.kobj, &settings_group);
+@@ -1209,7 +1256,7 @@ void mlx5e_sysfs_remove(struct net_devic
+ 	kobject_put(priv->ecn_root_kobj);
+ }
+ 
+-#ifdef CONFIG_MLX5_EN_SPECIAL_SQ
++#if defined(CONFIG_MLX5_EN_SPECIAL_SQ) && (defined(HAVE_NDO_SET_TX_MAXRATE) || defined(HAVE_NDO_SET_TX_MAXRATE_EXTENDED))
+ enum {
+ 	ATTR_DST_IP,
+ 	ATTR_DST_PORT,
+@@ -1278,24 +1325,36 @@ static ssize_t mlx5e_flow_param_store(st
+ }
+ 
+ static ssize_t mlx5e_dst_port_store(struct netdev_queue *queue,
++#if !defined(HAVE_NETDEV_QUEUE_SYSFS) || defined(HAVE_NETDEV_QUEUE_SYSFS_ATTRIBUTE)
++				    struct netdev_queue_attribute *attr,
++#endif
+ 				    const char *buf, size_t len)
+ {
+ 	return mlx5e_flow_param_store(queue, buf, len, ATTR_DST_PORT);
+ }
+ 
+ static ssize_t mlx5e_dst_port_show(struct netdev_queue *queue,
++#if !defined(HAVE_NETDEV_QUEUE_SYSFS) || defined(HAVE_NETDEV_QUEUE_SYSFS_ATTRIBUTE)
++				   struct netdev_queue_attribute *attr,
++#endif
+ 				   char *buf)
+ {
+ 	return mlx5e_flow_param_show(queue, buf, ATTR_DST_PORT);
+ }
+ 
+ static ssize_t mlx5e_dst_ip_store(struct netdev_queue *queue,
++#if !defined(HAVE_NETDEV_QUEUE_SYSFS) || defined(HAVE_NETDEV_QUEUE_SYSFS_ATTRIBUTE)
++				  struct netdev_queue_attribute *attr,
++#endif
+ 				  const char *buf, size_t len)
+ {
+ 	return mlx5e_flow_param_store(queue, buf, len, ATTR_DST_IP);
+ }
+ 
+ static ssize_t mlx5e_dst_ip_show(struct netdev_queue *queue,
++#if !defined(HAVE_NETDEV_QUEUE_SYSFS) || defined(HAVE_NETDEV_QUEUE_SYSFS_ATTRIBUTE)
++				 struct netdev_queue_attribute *attr,
++#endif
+ 				 char *buf)
+ {
+ 	return mlx5e_flow_param_show(queue, buf, ATTR_DST_IP);

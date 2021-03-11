@@ -1,0 +1,33 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx5/core/crdump.c
+
+Change-Id: Ic6a290da0aa5758ca8e8cfd7f1acea32bc2db8d1
+---
+ drivers/net/ethernet/mellanox/mlx5/core/crdump.c | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/crdump.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/crdump.c
+@@ -156,14 +156,20 @@ static int mlx5_crdump_open(struct inode
+ {
+ 	struct seq_file *seq;
+ 	int ret;
+-
++#ifndef HAVE_PDE_DATA
++	struct proc_dir_entry *pde;
++#endif
+ 	ret = seq_open(file, &mlx5_crdump_seq_ops);
+ 	if (ret)
+ 		return ret;
+ 
+ 	seq = file->private_data;
++#ifdef HAVE_PDE_DATA
+ 	seq->private = PDE_DATA(inode);
+-
++#else
++	pde = PDE(inode);
++	seq->private = pde->data;
++#endif
+ 	return 0;
+ }
+ 

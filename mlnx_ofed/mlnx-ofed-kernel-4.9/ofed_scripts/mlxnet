@@ -1,0 +1,211 @@
+#!/bin/bash 
+
+#
+# Copyright (c) 2006 Mellanox Technologies. All rights reserved.
+#
+# This Software is licensed under one of the following licenses:
+#
+# 1) under the terms of the "Common Public License 1.0" a copy of which is
+#    available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/cpl.php.
+#
+# 2) under the terms of the "The BSD License" a copy of which is
+#    available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/bsd-license.php.
+#
+# 3) under the terms of the "GNU General Public License (GPL) Version 2" a
+#    copy of which is available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/gpl-license.php.
+#
+# Licensee has the right to choose one of the above licenses.
+#
+# Redistributions of source code must retain the above copyright
+# notice and one of the license notices.
+#
+# Redistributions in binary form must reproduce both the above copyright
+# notice, one of the license notices in the documentation
+# and/or other materials provided with the distribution.
+#
+#
+
+CONFIG="/etc/mlxethernet/mlxnet.conf"
+if [ ! -f $CONFIG ]; then
+    echo No Ethernet configuration found
+    exit 0
+fi
+
+. $CONFIG
+
+
+ACTION=$1
+shift
+
+# Check if OpenIB configured to start automatically
+if [ "X${ONBOOT}" != "Xyes" ]; then
+    exit 0
+fi
+
+# If module $1 has refcnt return 1 otherwise, return 0
+is_ref()
+{
+    local RC
+    cat /sys/module/"$1"/refcnt | grep -w 0  > /dev/null 2>&1
+    RC=$?
+    if [ "${RC}" -eq "1" ]; then
+    	echo "$1" has references
+	RC=1
+    else
+    	RC=0
+    fi 
+    return $RC    
+}
+
+# If module $1 is loaded return - 0 else - 1
+is_module()
+{
+local RC
+
+    /sbin/lsmod | grep -w "$1" > /dev/null 2>&1
+    RC=$?
+    
+return $RC        
+}
+
+set_irq_affinity()
+{
+# Set the Intterupts affinity in Rx side
+irqs="`cat /proc/interrupts | grep mlx4 | grep comp | cut -d':' -f1 `"
+cores="`cat /proc/cpuinfo | grep processor -wc`"
+
+EQ=-1 
+core=-1
+for irq in $irqs; do
+	vec=`echo $irq | cut -d':' -f1`
+	EQ=$(($EQ+1))
+	core=$(($core+1))
+	if [ "$core" == "$cores" ]; then
+    	    core=0
+	fi
+	mask=`echo $core | awk '{printf("%x", lshift(1,$1))}'`
+	echo $mask > /proc/irq/$vec/smp_affinity
+	after_vec_hex=`cat /proc/irq/$vec/smp_affinity | tail -c3 | sed -e 's:^0[bBxX]::' | tr '[a-f]' '[A-F]'`
+	after_vec=`echo ""$after_vec_hex" 10 o p" | dc`
+	if [ "$mask" != "$after_vec" ]; then
+	    set_affinity="Warn"
+	fi
+done
+}
+
+handle_irqdaemon()
+{
+for irqb in /etc/init.d/irq* ; do
+    break
+done
+if [ "$set_affinity" == "Warn" ]; then
+    #We could not change the intterupt manually
+    #lets hope that at least the irq daemon is runinng
+    if $irqb status 1 >/dev/null 2>&1; then
+	echo "Deamon running" > /dev/null
+    else 
+	$irqb start 1 >/dev/null 2>&1 
+	#lets check if it is running now
+	if $irqb status 1 >/dev/null 2>&1; then
+	    echo "Deamon running" > /dev/null
+	else
+	    logger "mlx4_core: irq balancer daemon not running and interrupt affinity can't be set."
+	fi
+    fi
+fi
+}
+
+start()
+{
+    local RC=0
+    local cnt=0
+    /sbin/modprobe mlx4_core > /dev/null 2>&1
+    my_rc=$?
+    if [ $my_rc -ne 0 ]; then
+	echo "Loading Mellanox mlx4_core HCA driver: [FAIL]"
+	exit 1 
+    else
+	echo "Loading Mellanox mlx4_core HCA driver: [SUCCESS]"
+    fi
+
+    # Config the intterupt affinity
+    set_irq_affinity
+    # Check and turn on the irq balancer if needed
+    handle_irqdaemon
+
+    /sbin/modprobe mlx4_en > /dev/null 2>&1
+    my_rc=$?
+    if [ $my_rc -ne 0 ]; then
+	echo "Loading Mellanox mlx4_en driver: [FAIL]"
+	exit 1 
+    else
+	echo "Loading Mellanox mlx4_en driver: [SUCCESS]"
+	sleep 2
+        for eth_dev in /sys/class/net/eth*/device/vendor
+	do
+	    if [ `cat $eth_dev` == "0x15b3" ]; then 
+		cnt=1
+	    fi
+	done
+	if [ $cnt == 0 ]; then
+    	    echo "WARNING: No Ethernet interfaces found, please check configuration"
+	fi
+    fi
+
+    if [ -x ${LOAD_INTF} ]; then
+	$LOAD_INTF
+    fi
+}
+
+stop()
+{
+    local RC
+    echo "Unloading Mellanox mlx4_en driver"
+    if is_module mlx4_en; then
+	/sbin/rmmod mlx4_en > /dev/null 2>&1
+	RC=$?
+	if [ "$RC" -ne "0" ]; then
+    	    echo Could not unload Ethernet driver
+	    exit 1
+	fi
+    else
+    	echo Ethernet driver is not loaded
+    fi
+    if is_module mlx4_core; then
+	is_ref mlx4_core
+	RC=$?
+	if [ "$RC" -ne "1" ]; then
+	    /sbin/rmmod mlx4_core > /dev/null 2>&1
+	fi
+    else
+    	echo Core driver is not loaded
+    fi
+}
+
+case $ACTION in
+        start)
+                start
+                ;;
+        stop)
+                stop    
+                ;;
+        restart)
+                stop
+                start
+                ;;
+        *)
+                echo 
+                echo "Usage: `basename $0` {start|stop|restart}"
+                echo
+                exit 1
+                ;;
+esac
+
+RC=$?
+exit $RC
+
+
+

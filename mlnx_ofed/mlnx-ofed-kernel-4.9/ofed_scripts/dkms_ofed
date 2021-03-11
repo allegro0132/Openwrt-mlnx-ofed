@@ -1,0 +1,251 @@
+#!/bin/bash
+#
+# Copyright (c) 2013 Mellanox Technologies. All rights reserved.
+#
+# This Software is licensed under one of the following licenses:
+#
+# 1) under the terms of the "Common Public License 1.0" a copy of which is
+#    available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/cpl.php.
+#
+# 2) under the terms of the "The BSD License" a copy of which is
+#    available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/bsd-license.php.
+#
+# 3) under the terms of the "GNU General Public License (GPL) Version 2" a
+#    copy of which is available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/gpl-license.php.
+#
+# Licensee has the right to choose one of the above licenses.
+#
+# Redistributions of source code must retain the above copyright
+# notice and one of the license notices.
+#
+# Redistributions in binary form must reproduce both the above copyright
+# notice, one of the license notices in the documentation
+# and/or other materials provided with the distribution.
+#
+#
+
+WDIR=${0%*/*}
+NEED_CORE_DUMMY_MODS=0
+
+usage()
+{
+cat << EOF
+
+Usage: `basename $0` <kernel version> [options]
+
+	Options:
+		get-config:	Get configuration parameters for configure script
+		get-modules:	Get a list of kernel modules that will be compiled
+EOF
+}
+
+
+get-config()
+{
+def_configure_options=" \
+	--with-core-mod \
+	--with-user_mad-mod \
+	--with-user_access-mod \
+	--with-addr_trans-mod \
+	--with-mlx4-mod \
+	--with-mlx4_en-mod \
+	--with-mlx5-mod \
+	--with-mlxfw-mod \
+	--with-ipoib-mod \
+	"
+# check if dkms.conf exists and parse it, otherwise use the env variable or the default
+if [ -f $WDIR/../dkms.conf ];then
+	options=
+	while read line; do
+		if [[ $line =~ BUILT_MODULE_NAME ]];then
+			name=$(echo $line | sed -e 's/BUILT_MODULE_NAME\[[0-9]*\]=//g')
+			flag=`module_to_flag $name`
+			dashFlag=$(echo $flag | sed -e 's/-/\\\-/g')
+			if ! (echo $options 2> /dev/null | grep "$dashFlag" >/dev/null 2>&1); then
+				options="${options} $flag"
+			fi
+		fi
+	done < $WDIR/../dkms.conf
+	# W/A for --with-innova-ipsec flag opens features (not adding new module)
+	if (grep -q "with-innova-ipsec" $WDIR/../dkms.conf); then
+		options="${options} --with-innova-ipsec"
+	fi
+	# W/A for --with-mlx5-ipsec flag opens features (not adding new module)
+	if (grep -q "with-mlx5-ipsec" $WDIR/../dkms.conf); then
+		options="${options} --with-mlx5-ipsec"
+	fi
+	configure_options=$options
+else
+	configure_options=${configure_options:-"$def_configure_options"}
+fi
+
+echo $configure_options
+}
+
+module_to_flag()
+{
+	module=$1
+	shift
+
+	flag=
+
+	case "$module" in
+		mlx_compat|compat|ib_core|ib_cm|iw_cm)
+		flag=--with-core-mod
+		;;
+		ib_umad)
+		flag=--with-user_mad-mod
+		;;
+		ib_uverbs|ib_ucm)
+		flag=--with-user_access-mod
+		;;
+		rdma_cm|rdma_ucm)
+		flag=--with-addr_trans-mod
+		;;
+		mlx4_core|mlx4_ib)
+		flag=--with-mlx4-mod
+		;;
+		mlx5_core|mlx5_ib)
+		flag=--with-mlx5-mod
+		;;
+		mlx4_en)
+		flag=--with-mlx4_en-mod
+		;;
+		mlx4_ib)
+		flag=--with-mlx4_ib-mod
+		;;
+		ib_ipoib)
+		flag=--with-ipoib-mod
+		;;
+		memtrack)
+		flag=--with-memtrack
+		;;
+		ib_mad|ib_sa|ib_addr)
+		flag=--with-dummy-core-mods
+		;;
+		mlxfw)
+		flag=--with-mlxfw-mod
+		;;
+		mlx5_fpga_tools)
+		flag=--with-innova-flex
+		;;
+		mdev)
+		flag=--with-mdev-mod
+		;;
+		*)
+		;;
+	esac
+
+	echo $flag
+}
+
+get-modules()
+{
+	modules=
+
+	for opt in `get-config`
+	do
+		case "$opt" in
+			--with-core-mod )
+			modules="$modules \
+				compat/mlx_compat \
+				drivers/infiniband/core/ib_core \
+				drivers/infiniband/core/ib_cm \
+				drivers/infiniband/core/iw_cm"
+			if [ $NEED_CORE_DUMMY_MODS -eq 1 ]; then
+				modules="$modules \
+					drivers/infiniband/core/ib_mad \
+					drivers/infiniband/core/ib_sa"
+			fi
+			;;
+			--with-user_mad-mod )
+			modules="$modules \
+				drivers/infiniband/core/ib_umad"
+			;;
+			--with-user_access-mod )
+			modules="$modules \
+				drivers/infiniband/core/ib_uverbs \
+				drivers/infiniband/core/ib_ucm"
+			;;
+			--with-addr_trans-mod )
+			modules="$modules \
+				drivers/infiniband/core/rdma_cm \
+				drivers/infiniband/core/rdma_ucm"
+			if [ $NEED_CORE_DUMMY_MODS -eq 1 ]; then
+				modules="$modules \
+					drivers/infiniband/core/ib_addr"
+			fi
+			;;
+			--with-mlx4-mod )
+			modules="$modules \
+				drivers/net/ethernet/mellanox/mlx4/mlx4_core \
+				drivers/infiniband/hw/mlx4/mlx4_ib"
+			;;
+			--with-mlx5-mod )
+			modules="$modules \
+				drivers/net/ethernet/mellanox/mlx5/core/mlx5_core \
+				drivers/infiniband/hw/mlx5/mlx5_ib"
+			;;
+			--with-mlx4_en-mod )
+			modules="$modules \
+				drivers/net/ethernet/mellanox/mlx4/mlx4_en"
+			;;
+			--with-mlx4_ib-mod )
+			modules="$modules \
+				drivers/infiniband/hw/mlx4/mlx4_ib"
+			;;
+			--with-ipoib-mod )
+			modules="$modules \
+				drivers/infiniband/ulp/ipoib/ib_ipoib"
+			;;
+			--with-memtrack )
+			modules="$modules \
+				drivers/infiniband/debug/memtrack"
+			;;
+			--with-mlxfw-mod )
+			modules="$modules \
+				drivers/net/ethernet/mellanox/mlxfw/mlxfw"
+			;;
+			--with-innova-flex | --with-innova-ipsec )
+			modules="$modules \
+				drivers/net/ethernet/mellanox/mlx5/fpga/mlx5_fpga_tools"
+			;;
+			--with-mdev-mod )
+			modules="$modules \
+				drivers/vfio/mdev/mdev"
+			;;
+			*)
+			;;
+		esac
+	done
+
+	echo $modules
+}
+
+kernelver=$1; shift
+kernel_source_dir=$1; shift
+
+if (grep -wq ib_sa $kernel_source_dir/drivers/infiniband/core/Makefile >/dev/null) ||
+   (modinfo -k "$kernelver" ib_sa &>/dev/null); then
+    NEED_CORE_DUMMY_MODS=1
+fi
+
+case "$1" in
+	get-config)
+	get-config
+	;;
+	get-modules)
+	get-modules
+	;;
+	-h|--help)
+	usage
+	exit 0
+	;;
+	*)
+	usage
+	exit 1
+	;;
+esac

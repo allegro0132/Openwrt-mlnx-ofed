@@ -1,0 +1,26 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx4/pd.c
+
+Change-Id: I8a5e71c60c4f17ff7053935697669d1412784259
+---
+ drivers/net/ethernet/mellanox/mlx4/pd.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+--- a/drivers/net/ethernet/mellanox/mlx4/pd.c
++++ b/drivers/net/ethernet/mellanox/mlx4/pd.c
+@@ -205,9 +205,15 @@ int mlx4_bf_alloc(struct mlx4_dev *dev,
+ 			goto free_uar;
+ 		}
+ 
++#ifdef HAVE_IO_MAPPING_MAP_WC_3_PARAMS
+ 		uar->bf_map = io_mapping_map_wc(priv->bf_mapping,
+ 						uar->index << PAGE_SHIFT,
+ 						PAGE_SIZE);
++#else
++		uar->bf_map = io_mapping_map_wc(priv->bf_mapping,
++						uar->index << PAGE_SHIFT);
++#endif
++
+ 		if (!uar->bf_map) {
+ 			err = -ENOMEM;
+ 			goto unamp_uar;

@@ -1,0 +1,21 @@
+From: Tariq Toukan <tariqt@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/debug/memtrack.c
+
+Change-Id: I061cd52e512475fca55cb0c5b921e43f92c957f6
+---
+ drivers/infiniband/debug/memtrack.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+--- a/drivers/infiniband/debug/memtrack.c
++++ b/drivers/infiniband/debug/memtrack.c
+@@ -779,6 +779,10 @@ int is_non_trackable_alloc_func(const ch
+ 		"mlx4_crdump_collect_fw_health",
+ 		"mlx5e_page_alloc_mapped",
+ 		"mlx5e_put_page",
++#ifndef HAVE_XDP_FRAME
++		"mlx5e_xdp_xmit",
++		"mlx5e_free_xdpsq_desc",
++#endif
+ 		/* vnic skb functions */
+ 		"free_single_frag",
+ 		"vnic_alloc_rx_skb",

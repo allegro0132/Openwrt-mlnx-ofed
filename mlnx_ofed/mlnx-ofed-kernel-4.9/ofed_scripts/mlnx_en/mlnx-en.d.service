@@ -1,0 +1,18 @@
+[Unit]
+Description=mlnx-en.d - configure Mellanox devices
+Documentation=file:/etc/mlnx-en.conf
+After=wickedd.service wickedd-nanny.service local-fs.target sysinit.target
+Before=network.target network.service networking.service remote-fs-pre.target
+RefuseManualStop=false
+DefaultDependencies=false
+
+[Service]
+Type=oneshot
+TimeoutSec=180
+RemainAfterExit=yes
+ExecStart=/etc/init.d/mlnx-en.d start
+ExecStop=/etc/init.d/mlnx-en.d stop
+ExecReload=/etc/init.d/mlnx-en.d restart
+
+[Install]
+WantedBy=sysinit.target

@@ -1,0 +1,176 @@
+From: Sergey Gorenko <sergeygo@mellanox.com>
+Subject: [PATCH] BACKPORT: include/target/iscsi/iscsi_target_core.h
+
+Change-Id: Id00634b7cb167a5e0b056ed694d25cd4716f9423
+---
+ include/target/iscsi/iscsi_target_core.h | 57 ++++++++++++++++++++++++
+ 1 file changed, 57 insertions(+)
+
+--- a/include/target/iscsi/iscsi_target_core.h
++++ b/include/target/iscsi/iscsi_target_core.h
+@@ -443,8 +443,10 @@ struct iscsi_cmd {
+ 	u32			tx_size;
+ 	/* Buffer used for various purposes */
+ 	void			*buf_ptr;
++#if defined(CONFIG_COMPAT_RHEL_7_1) || (LINUX_VERSION_CODE >= KERNEL_VERSION(3,11,0))
+ 	/* Used by SendTargets=[iqn.,eui.] discovery */
+ 	void			*text_in_ptr;
++#endif
+ 	/* See include/linux/dma-mapping.h */
+ 	enum dma_data_direction	data_direction;
+ 	/* iSCSI PDU Header + CRC */
+@@ -502,6 +504,9 @@ struct iscsi_cmd {
+ 	u32			first_data_sg_off;
+ 	u32			kmapped_nents;
+ 	sense_reason_t		sense_reason;
++#if !defined(CONFIG_COMPAT_RHEL_7_2) && (LINUX_VERSION_CODE < KERNEL_VERSION(3,12,0))
++	void (*release_cmd)(struct iscsi_cmd *);
++#endif
+ }  ____cacheline_aligned;
+ 
+ struct iscsi_tmr_req {
+@@ -544,6 +549,10 @@ struct iscsi_conn {
+ 	u32			of_marker;
+ 	/* Used for calculating OFMarker offset to next PDU */
+ 	u32			of_marker_offset;
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,11,0))
++	/* Complete Bad PDU for sending reject */
++	unsigned char           bad_hdr[ISCSI_HDR_LEN];
++#endif
+ #define IPV6_ADDRESS_SPACE				48
+ 	unsigned char		login_ip[IPV6_ADDRESS_SPACE];
+ 	unsigned char		local_ip[IPV6_ADDRESS_SPACE];
+@@ -566,7 +575,12 @@ struct iscsi_conn {
+ 	struct completion	rx_half_close_comp;
+ 	/* socket used by this connection */
+ 	struct socket		*sock;
++#if defined(CONFIG_COMPAT_SLES_12_0) || defined(CONFIG_COMPAT_UBUNTU_14_4)
++	void			(*orig_data_ready)(struct sock *, int);
++#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(3,12,0))
+ 	void			(*orig_data_ready)(struct sock *);
++#endif
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,12,0))
+ 	void			(*orig_state_change)(struct sock *);
+ #define LOGIN_FLAGS_READ_ACTIVE		1
+ #define LOGIN_FLAGS_CLOSED		2
+@@ -575,10 +589,13 @@ struct iscsi_conn {
+ 	struct delayed_work	login_work;
+ 	struct delayed_work	login_cleanup_work;
+ 	struct iscsi_login	*login;
++#endif
+ 	struct timer_list	nopin_timer;
+ 	struct timer_list	nopin_response_timer;
+ 	struct timer_list	transport_timer;
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,12,0))
+ 	struct task_struct	*login_kworker;
++#endif
+ 	/* Spinlock used for add/deleting cmd's from conn_cmd_list */
+ 	spinlock_t		cmd_lock;
+ 	spinlock_t		conn_usage_lock;
+@@ -660,13 +677,27 @@ struct iscsi_session {
+ 	/* Used for session reference counting */
+ 	int			session_usage_count;
+ 	int			session_waiting_on_uc;
++#if defined(CONFIG_COMPAT_SLES_12)\
++|| (LINUX_VERSION_CODE >= KERNEL_VERSION(3,13,0))
+ 	atomic_long_t		cmd_pdus;
+ 	atomic_long_t		rsp_pdus;
+ 	atomic_long_t		tx_data_octets;
+ 	atomic_long_t		rx_data_octets;
+ 	atomic_long_t		conn_digest_errors;
+ 	atomic_long_t		conn_timeout_errors;
++#else
++	u32			cmd_pdus;
++	u32			rsp_pdus;
++	u64			tx_data_octets;
++	u64			rx_data_octets;
++	u32			conn_digest_errors;
++	u32			conn_timeout_errors;
++#endif
+ 	u64			creation_time;
++#if !defined(CONFIG_COMPAT_SLES_12)\
++&& (LINUX_VERSION_CODE < KERNEL_VERSION(3,13,0))
++	spinlock_t		session_stats_lock;
++#endif
+ 	/* Number of active connections */
+ 	atomic_t		nconn;
+ 	atomic_t		session_continuation;
+@@ -704,7 +735,9 @@ struct iscsi_login {
+ 	u8 version_max;
+ 	u8 login_complete;
+ 	u8 login_failed;
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,12,0))
+ 	bool zero_tsih;
++#endif
+ 	char isid[6];
+ 	u32 cmd_sn;
+ 	itt_t init_task_tag;
+@@ -773,9 +806,14 @@ struct iscsi_tpg_attrib {
+ 	u32			default_cmdsn_depth;
+ 	u32			demo_mode_write_protect;
+ 	u32			prod_mode_write_protect;
++#if defined(CONFIG_COMPAT_SLES_12)\
++|| (LINUX_VERSION_CODE >= KERNEL_VERSION(3,13,0))
+ 	u32			demo_mode_discovery;
+ 	u32			default_erl;
++#endif
++#ifdef HAVE_ISCSIT_TRANSPORT_HAS_GET_SUP_PROT_OPS
+ 	u8			t10_pi;
++#endif
+ 	struct iscsi_portal_group *tpg;
+ };
+ 
+@@ -784,7 +822,12 @@ struct iscsi_np {
+ 	int			np_ip_proto;
+ 	int			np_sock_type;
+ 	enum np_thread_state_table np_thread_state;
++#if defined(CONFIG_COMPAT_RHEL_7_1)\
++	|| defined(CONFIG_COMPAT_SLES_12)\
++	|| defined(CONFIG_COMPAT_FBK_16)\
++	|| (LINUX_VERSION_CODE >= KERNEL_VERSION(3,15,0))
+ 	bool                    enabled;
++#endif
+ 	enum iscsi_timer_flags_table np_login_timer_flags;
+ 	u32			np_exports;
+ 	enum np_flags_table	np_flags;
+@@ -796,9 +839,17 @@ struct iscsi_np {
+ 	struct __kernel_sockaddr_storage np_sockaddr;
+ 	struct task_struct	*np_thread;
+ 	struct timer_list	np_login_timer;
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,12,0))
++	struct iscsi_portal_group *np_login_tpg;
++#endif
+ 	void			*np_context;
+ 	struct iscsit_transport *np_transport;
+ 	struct list_head	np_list;
++#if defined(CONFIG_COMPAT_SLES_12_0) ||\
++	((LINUX_VERSION_CODE >= KERNEL_VERSION(3,15,0)) &&\
++	(LINUX_VERSION_CODE < KERNEL_VERSION(3,19,0)))
++	struct iscsi_tpg_np     *tpg_np;
++#endif
+ } ____cacheline_aligned;
+ 
+ struct iscsi_tpg_np {
+@@ -810,8 +861,10 @@ struct iscsi_tpg_np {
+ 	struct list_head	tpg_np_parent_list;
+ 	struct se_tpg_np	se_tpg_np;
+ 	spinlock_t		tpg_np_parent_lock;
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,12,0))
+ 	struct completion	tpg_np_comp;
+ 	struct kref		tpg_np_kref;
++#endif
+ };
+ 
+ struct iscsi_portal_group {
+@@ -833,7 +886,11 @@ struct iscsi_portal_group {
+ 	spinlock_t		tpg_state_lock;
+ 	struct se_portal_group tpg_se_tpg;
+ 	struct mutex		tpg_access_lock;
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,12,0))
+ 	struct semaphore	np_login_sem;
++#else
++	struct mutex		np_login_lock;
++#endif
+ 	struct iscsi_tpg_attrib	tpg_attrib;
+ 	struct iscsi_node_auth	tpg_demo_auth;
+ 	/* Pointer to default list of iSCSI parameters for TPG */

@@ -1,0 +1,123 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/core/iwpm_util.c
+
+Change-Id: I0a2b35671053dfd06bad7f94565584ed2aee6315
+---
+ drivers/infiniband/core/iwpm_util.c | 32 ++++++++++++++++++++++++--------
+ 1 file changed, 24 insertions(+), 8 deletions(-)
+
+--- a/drivers/infiniband/core/iwpm_util.c
++++ b/drivers/infiniband/core/iwpm_util.c
+@@ -186,6 +186,7 @@ int iwpm_remove_mapinfo(struct sockaddr_
+ 	struct hlist_node *tmp_hlist_node;
+ 	struct hlist_head *hash_bucket_head;
+ 	struct iwpm_mapping_info *map_info = NULL;
++	COMPAT_HL_NODE
+ 	unsigned long flags;
+ 	int ret = -EINVAL;
+ 
+@@ -197,7 +198,7 @@ int iwpm_remove_mapinfo(struct sockaddr_
+ 		if (!hash_bucket_head)
+ 			goto remove_mapinfo_exit;
+ 
+-		hlist_for_each_entry_safe(map_info, tmp_hlist_node,
++		compat_hlist_for_each_entry_safe(map_info, tmp_hlist_node,
+ 					hash_bucket_head, hlist_node) {
+ 
+ 			if (!iwpm_compare_sockaddr(&map_info->mapped_sockaddr,
+@@ -219,13 +220,14 @@ static void free_hash_bucket(void)
+ {
+ 	struct hlist_node *tmp_hlist_node;
+ 	struct iwpm_mapping_info *map_info;
++	COMPAT_HL_NODE
+ 	unsigned long flags;
+ 	int i;
+ 
+ 	/* remove all the mapinfo data from the list */
+ 	spin_lock_irqsave(&iwpm_mapinfo_lock, flags);
+ 	for (i = 0; i < IWPM_MAPINFO_HASH_SIZE; i++) {
+-		hlist_for_each_entry_safe(map_info, tmp_hlist_node,
++		compat_hlist_for_each_entry_safe(map_info, tmp_hlist_node,
+ 			&iwpm_hash_bucket[i], hlist_node) {
+ 
+ 				hlist_del_init(&map_info->hlist_node);
+@@ -242,13 +244,14 @@ static void free_reminfo_bucket(void)
+ {
+ 	struct hlist_node *tmp_hlist_node;
+ 	struct iwpm_remote_info *rem_info;
++	COMPAT_HL_NODE
+ 	unsigned long flags;
+ 	int i;
+ 
+ 	/* remove all the remote info from the list */
+ 	spin_lock_irqsave(&iwpm_reminfo_lock, flags);
+ 	for (i = 0; i < IWPM_REMINFO_HASH_SIZE; i++) {
+-		hlist_for_each_entry_safe(rem_info, tmp_hlist_node,
++		compat_hlist_for_each_entry_safe(rem_info, tmp_hlist_node,
+ 			&iwpm_reminfo_bucket[i], hlist_node) {
+ 
+ 				hlist_del_init(&rem_info->hlist_node);
+@@ -300,6 +303,7 @@ int iwpm_get_remote_info(struct sockaddr
+ 	struct hlist_head *hash_bucket_head;
+ 	struct iwpm_remote_info *rem_info = NULL;
+ 	unsigned long flags;
++	COMPAT_HL_NODE
+ 	int ret = -EINVAL;
+ 
+ 	if (!iwpm_valid_client(nl_client)) {
+@@ -313,7 +317,7 @@ int iwpm_get_remote_info(struct sockaddr
+ 					mapped_rem_addr);
+ 		if (!hash_bucket_head)
+ 			goto get_remote_info_exit;
+-		hlist_for_each_entry_safe(rem_info, tmp_hlist_node,
++		compat_hlist_for_each_entry_safe(rem_info, tmp_hlist_node,
+ 					hash_bucket_head, hlist_node) {
+ 
+ 			if (!iwpm_compare_sockaddr(&rem_info->mapped_loc_sockaddr,
+@@ -506,13 +510,24 @@ int iwpm_parse_nlmsg(struct netlink_call
+ 	int ret;
+ 	const char *err_str = "";
+ 
+-	ret = nlmsg_validate_deprecated(cb->nlh, nlh_len, policy_max - 1,
+-					nlmsg_policy, NULL);
++#ifdef CONFIG_COMPAT_IS_NLMSG_VALIDATE_NOT_CONST_NLMSGHDR
++	ret = nlmsg_validate((struct nlmsghdr *)cb->nlh, nlh_len, policy_max-1, nlmsg_policy,
++			     NULL);
++#elif defined(HAVE_NLMSG_VALIDATE_DEPRECATED)
++       ret = nlmsg_validate_deprecated(cb->nlh, nlh_len, policy_max - 1,
++       				nlmsg_policy, NULL);
++#else
++       ret = nlmsg_validate(cb->nlh, nlh_len, policy_max - 1, nlmsg_policy, NULL);
++#endif
+ 	if (ret) {
+ 		err_str = "Invalid attribute";
+ 		goto parse_nlmsg_error;
+ 	}
++#ifdef HAVE_NLMSG_PARSE_DEPRECATED
+ 	ret = nlmsg_parse_deprecated(cb->nlh, nlh_len, nltb, policy_max - 1,
++#else
++	ret = nlmsg_parse(cb->nlh, nlh_len, nltb, policy_max - 1,
++#endif
+ 				     nlmsg_policy, NULL);
+ 	if (ret) {
+ 		err_str = "Unable to parse the nlmsg";
+@@ -688,8 +703,9 @@ int iwpm_send_mapinfo(u8 nl_client, int
+ 	int skb_num = 0, mapping_num = 0;
+ 	int i = 0, nlmsg_bytes = 0;
+ 	unsigned long flags;
++	COMPAT_HL_NODE
+ 	const char *err_str = "";
+-	int ret;
++	int ret = 0;
+ 
+ 	skb = dev_alloc_skb(NLMSG_GOODSIZE);
+ 	if (!skb) {
+@@ -701,7 +717,7 @@ int iwpm_send_mapinfo(u8 nl_client, int
+ 	spin_lock_irqsave(&iwpm_mapinfo_lock, flags);
+ 	ret = -EINVAL;
+ 	for (i = 0; i < IWPM_MAPINFO_HASH_SIZE; i++) {
+-		hlist_for_each_entry(map_info, &iwpm_hash_bucket[i],
++		compat_hlist_for_each_entry(map_info, &iwpm_hash_bucket[i],
+ 				     hlist_node) {
+ 			if (map_info->nl_client != nl_client)
+ 				continue;

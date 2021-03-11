@@ -1,0 +1,184 @@
+#
+# Copyright (c) 2017 Mellanox Technologies. All rights reserved.
+#
+# This Software is licensed under one of the following licenses:
+#
+# 1) under the terms of the "Common Public License 1.0" a copy of which is
+#    available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/cpl.php.
+#
+# 2) under the terms of the "The BSD License" a copy of which is
+#    available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/bsd-license.php.
+#
+# 3) under the terms of the "GNU General Public License (GPL) Version 2" a
+#    copy of which is available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/gpl-license.php.
+#
+# Licensee has the right to choose one of the above licenses.
+#
+# Redistributions of source code must retain the above copyright
+# notice and one of the license notices.
+#
+# Redistributions in binary form must reproduce both the above copyright
+# notice, one of the license notices in the documentation
+# and/or other materials provided with the distribution.
+#
+# Author: Alaa Hleihel <alaa@mellanox.com>
+#
+
+PHONY += all clean distclean build_tool_check src-pkg bin-pkg dist help
+.PHONY: $(PHONY)
+
+.DELETE_ON_ERROR:
+
+SHELL := /bin/bash
+
+timestamp = $(shell date +"%Y.%m.%d.%H.%M.%S")
+
+ifeq ($(shell /usr/bin/lsb_release -s -i 2>/dev/null | grep -qiE "debian|ubuntu" 2>/dev/null && echo YES || echo ''),)
+name = mlnx-ofa_kernel
+else
+name = mlnx-ofed-kernel
+endif
+
+last_commit = $(shell git rev-parse HEAD 2>/dev/null | cut -c-7)
+ifeq ($(last_commit),)
+last_commit=nogit
+endif
+ifneq ($(shell git diff --shortstat 2>/dev/null | tail -n1),)
+dirty=.dirty
+endif
+
+VERSION := 4.1
+RELEASE := $(timestamp).g$(last_commit)$(dirty)
+PACKAGE := $(name)-$(VERSION)
+rpmroot = $(PWD)/rpm-dist/
+rpmspec := $(rpmroot)/$(PACKAGE)/mlnx-ofa_kernel.spec
+rpmmacros =\
+	    --define='_topdir $(rpmroot)' \
+	    --define='_rpmdir $(rpmroot)' \
+	    --define='_srcrpmdir $(rpmroot)' \
+	    --define='_sourcedir $(rpmroot)' \
+	    --define='_specdir $(PWD)' \
+	    --define '_source_filedigest_algorithm md5' \
+	    --define '_binary_filedigest_algorithm md5'
+ifneq ($(configure_options),)
+export configure_options
+override rpmmacros += --define 'configure_options $(configure_options)'
+endif
+
+all: help
+
+clean: distclean
+
+distclean:
+	/bin/rm -rf $(PWD)/rpm-dist
+
+build_tool_check:
+ifeq ($(shell /usr/bin/lsb_release -s -i 2>/dev/null | grep -qiE "debian|ubuntu" 2>/dev/null && echo YES || echo ''),)
+	@which rpmbuild &> /dev/null; \
+		if [ $$? -ne 0 ]; then \
+		echo "*** rpmbuild tool is missing !"; \
+		(exit 1); exit 1; \
+		fi
+else
+	@which dpkg-buildpackage &> /dev/null; \
+		if [ $$? -ne 0 ]; then \
+		echo "*** dpkg-buildpackage tool is missing !"; \
+		(exit 1); exit 1; \
+		fi
+endif
+
+src-pkg: build_tool_check dist
+	@echo
+ifeq ($(shell /usr/bin/lsb_release -s -i 2>/dev/null | grep -qiE "debian|ubuntu" 2>/dev/null && echo YES || echo ''),)
+	@echo "Building src.rpm..."
+	-rpmbuild -bs --define 'src_release $(RELEASE)' $(rpmmacros) $(rpmspec); \
+		if [ $$? -ne 0 ]; then \
+		(exit 1); exit 1; \
+		fi
+else
+	@echo "$(rpmroot)/$(name)_$(VERSION).orig.tar.gz"
+endif
+
+bin-pkg: build_tool_check dist
+	@echo
+ifeq ($(shell /usr/bin/lsb_release -s -i 2>/dev/null | grep -qiE "debian|ubuntu" 2>/dev/null && echo YES || echo ''),)
+	@echo "Building binary RPMs..."
+	-rpmbuild -bb $(rpmmacros) $(rpmspec); \
+		if [ $$? -ne 0 ]; then \
+		(exit 1); exit 1; \
+		fi
+else
+	@echo "Building binary DEBs..."
+	-cd $(rpmroot)/$(PACKAGE) && dpkg-buildpackage -us -uc; \
+		if [ $$? -ne 0 ]; then \
+		(exit 1); exit 1; \
+		fi
+	@echo
+	@echo "DEB files ready at:"
+	@ls $(rpmroot)/*deb
+endif
+
+dist:
+	@echo
+	@echo "Preparing source tarball..."
+	@/bin/rm -rf $(rpmroot)/$(PACKAGE)
+	@mkdir -p $(rpmroot)/{$(PACKAGE),BUILD,RPMS,SRPMS,SPECS,SOURCES,BUILDROOT}
+	@/bin/cp -r backports* \
+	      compat* \
+	      debian \
+	      Documentation \
+	      drivers \
+	      include \
+	      LINUX_* \
+	      Module.supported \
+	      net \
+	      ofed_scripts \
+	      README \
+	      COPYING \
+	      scripts \
+	      $(rpmroot)/$(PACKAGE)/
+	@/bin/rm -f $(rpmroot)/$(PACKAGE)/ofed_scripts/mlnx_en/mlnx_en.spec
+	@/bin/rm -f $(rpmroot)/$(PACKAGE)/configure.mk.kernel
+	@/bin/rm -f $(rpmroot)/$(PACKAGE)/compat.config
+	@/bin/cp -f ofed_scripts/mlnx-ofa_kernel.spec $(rpmspec)
+	@sed -i 's/@VERSION@/$(VERSION)/g' $(rpmspec)
+	@sed -i 's/@RELEASE@/$(RELEASE)/g' $(rpmspec)
+	@sed -i 's/@VERSION@/$(VERSION)/g' $(rpmroot)/$(PACKAGE)/debian/changelog
+	@sed -i 's/@RELEASE@/$(RELEASE)/g' $(rpmroot)/$(PACKAGE)/debian/changelog
+	@sed -i 's/@VERSION@/$(VERSION)/g' $(rpmroot)/$(PACKAGE)/ofed_scripts/generate_dkms_conf.sh
+	@echo $(RELEASE) > $(rpmroot)/$(PACKAGE)/compat_version
+	@echo $(RELEASE) > $(rpmroot)/$(PACKAGE)/compat_base_tree_version
+	@echo $(RELEASE) > $(rpmroot)/$(PACKAGE)/compat_base_tree
+	@echo $(RELEASE) > $(rpmroot)/$(PACKAGE)/compat_base
+	@cd $(rpmroot)/$(PACKAGE) && ln -snf ofed_scripts/configure
+	@cd $(rpmroot)/$(PACKAGE) && ln -snf ofed_scripts/Makefile
+	@cd $(rpmroot)/$(PACKAGE) && ln -snf ofed_scripts/makefile
+	@cd $(rpmroot)/$(PACKAGE)/compat && ./autogen.sh
+ifeq ($(shell /usr/bin/lsb_release -s -i 2>/dev/null | grep -qiE "debian|ubuntu" 2>/dev/null && echo YES || echo ''),)
+	cd $(rpmroot) && tar czf $(PACKAGE).tgz $(PACKAGE)
+else
+	cd $(rpmroot) && tar czf $(name)_$(VERSION).orig.tar.gz $(PACKAGE)
+endif
+	@echo "Done, source tarball is ready."
+
+help:
+	@echo
+	@echo Packaging:
+	@echo "    src-pkg               Build $(name) source package."
+	@echo "    bin-pkg               Build $(name) binary packages for current platfrom (rpm, deb)."
+	@echo
+	@echo "distclean                 Remove $(rpmroot) directory and it's content."
+	@echo
+	@echo "Notes:"
+	@echo "1. To change default configure options use: configure_options=\"options\" "
+	@echo "2. The package will be built from current source folder, and will include any modified files."
+	@echo "3. Sources/binaries will be placed at $(rpmroot)"
+	@echo
+	@echo
+	@echo "Usage example: "
+	@echo "  make -f ofed_scripts/makefile.packaging bin-pkg"
+	@echo
+	@echo

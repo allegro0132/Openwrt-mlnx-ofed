@@ -1,0 +1,146 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx4/en_dcb_nl.c
+
+Change-Id: I752371bc58b7d0cede38eba25de1b1cb6c21658a
+---
+ drivers/net/ethernet/mellanox/mlx4/en_dcb_nl.c | 47 ++++++++++++++++++++++++++
+ 1 file changed, 47 insertions(+)
+
+--- a/drivers/net/ethernet/mellanox/mlx4/en_dcb_nl.c
++++ b/drivers/net/ethernet/mellanox/mlx4/en_dcb_nl.c
+@@ -138,7 +138,11 @@ static void mlx4_en_dcbnl_set_pfc_cfg(st
+ 	priv->cee_config.pfc_state = true;
+ }
+ 
++#ifdef NDO_GETNUMTCS_RETURNS_INT
+ static int mlx4_en_dcbnl_getnumtcs(struct net_device *netdev, int tcid, u8 *num)
++#else
++static u8 mlx4_en_dcbnl_getnumtcs(struct net_device *netdev, int tcid, u8 *num)
++#endif
+ {
+ 	struct mlx4_en_priv *priv = netdev_priv(netdev);
+ 
+@@ -254,7 +258,11 @@ static u8 mlx4_en_dcbnl_set_state(struct
+  * otherwise returns 0 as the invalid user priority bitmap to
+  * indicate an error.
+  */
++#ifdef NDO_GETAPP_RETURNS_INT
+ static int mlx4_en_dcbnl_getapp(struct net_device *netdev, u8 idtype, u16 id)
++#else
++static u8 mlx4_en_dcbnl_getapp(struct net_device *netdev, u8 idtype, u16 id)
++#endif
+ {
+ 	struct mlx4_en_priv *priv = netdev_priv(netdev);
+ 	struct dcb_app app = {
+@@ -267,8 +275,13 @@ static int mlx4_en_dcbnl_getapp(struct n
+ 	return dcb_getapp(netdev, &app);
+ }
+ 
++#ifdef NDO_SETAPP_RETURNS_INT
+ static int mlx4_en_dcbnl_setapp(struct net_device *netdev, u8 idtype,
+ 				u16 id, u8 up)
++#else
++static u8 mlx4_en_dcbnl_setapp(struct net_device *netdev, u8 idtype,
++			       u16 id, u8 up)
++#endif
+ {
+ 	struct mlx4_en_priv *priv = netdev_priv(netdev);
+ 	struct dcb_app app;
+@@ -572,7 +585,11 @@ err:
+ }
+ 
+ #define MLX4_RATELIMIT_UNITS_IN_KB 100000 /* rate-limit HW unit in Kbps */
++#ifndef CONFIG_SYSFS_MAXRATE
+ static int mlx4_en_dcbnl_ieee_getmaxrate(struct net_device *dev,
++#else
++int mlx4_en_dcbnl_ieee_getmaxrate(struct net_device *dev,
++#endif
+ 				   struct ieee_maxrate *maxrate)
+ {
+ 	struct mlx4_en_priv *priv = netdev_priv(dev);
+@@ -585,7 +602,11 @@ static int mlx4_en_dcbnl_ieee_getmaxrate
+ 	return 0;
+ }
+ 
++#ifndef CONFIG_SYSFS_MAXRATE
+ static int mlx4_en_dcbnl_ieee_setmaxrate(struct net_device *dev,
++#else
++int mlx4_en_dcbnl_ieee_setmaxrate(struct net_device *dev,
++#endif
+ 		struct ieee_maxrate *maxrate)
+ {
+ 	struct mlx4_en_priv *priv = netdev_priv(dev);
+@@ -613,7 +634,11 @@ static int mlx4_en_dcbnl_ieee_setmaxrate
+ #define RPG_ENABLE_BIT	31
+ #define CN_TAG_BIT	30
+ 
++#ifndef CONFIG_SYSFS_QCN
+ static int mlx4_en_dcbnl_ieee_getqcn(struct net_device *dev,
++#else
++int mlx4_en_dcbnl_ieee_getqcn(struct net_device *dev,
++#endif
+ 				     struct ieee_qcn *qcn)
+ {
+ 	struct mlx4_en_priv *priv = netdev_priv(dev);
+@@ -676,7 +701,11 @@ static int mlx4_en_dcbnl_ieee_getqcn(str
+ 	return 0;
+ }
+ 
++#ifndef CONFIG_SYSFS_QCN
+ static int mlx4_en_dcbnl_ieee_setqcn(struct net_device *dev,
++#else
++int mlx4_en_dcbnl_ieee_setqcn(struct net_device *dev,
++#endif
+ 				     struct ieee_qcn *qcn)
+ {
+ 	struct mlx4_en_priv *priv = netdev_priv(dev);
+@@ -739,7 +768,11 @@ static int mlx4_en_dcbnl_ieee_setqcn(str
+ 	return 0;
+ }
+ 
++#ifndef CONFIG_SYSFS_QCN
+ static int mlx4_en_dcbnl_ieee_getqcnstats(struct net_device *dev,
++#else
++int mlx4_en_dcbnl_ieee_getqcnstats(struct net_device *dev,
++#endif
+ 					  struct ieee_qcn_stats *qcn_stats)
+ {
+ 	struct mlx4_en_priv *priv = netdev_priv(dev);
+@@ -785,11 +818,15 @@ static int mlx4_en_dcbnl_ieee_getqcnstat
+ const struct dcbnl_rtnl_ops mlx4_en_dcbnl_ops = {
+ 	.ieee_getets		= mlx4_en_dcbnl_ieee_getets,
+ 	.ieee_setets		= mlx4_en_dcbnl_ieee_setets,
++#ifdef HAVE_IEEE_GET_SET_MAXRATE
+ 	.ieee_getmaxrate	= mlx4_en_dcbnl_ieee_getmaxrate,
+ 	.ieee_setmaxrate	= mlx4_en_dcbnl_ieee_setmaxrate,
++#endif
++#ifdef HAVE_IEEE_GETQCN
+ 	.ieee_getqcn		= mlx4_en_dcbnl_ieee_getqcn,
+ 	.ieee_setqcn		= mlx4_en_dcbnl_ieee_setqcn,
+ 	.ieee_getqcnstats	= mlx4_en_dcbnl_ieee_getqcnstats,
++#endif
+ 	.ieee_getpfc		= mlx4_en_dcbnl_ieee_getpfc,
+ 	.ieee_setpfc		= mlx4_en_dcbnl_ieee_setpfc,
+ 
+@@ -807,11 +844,21 @@ const struct dcbnl_rtnl_ops mlx4_en_dcbn
+ 
+ 	.getdcbx	= mlx4_en_dcbnl_getdcbx,
+ 	.setdcbx	= mlx4_en_dcbnl_setdcbx,
++#ifdef HAVE_IEEE_GETQCN
+ 	.ieee_getqcn	= mlx4_en_dcbnl_ieee_getqcn,
+ 	.ieee_setqcn	= mlx4_en_dcbnl_ieee_setqcn,
+ 	.ieee_getqcnstats = mlx4_en_dcbnl_ieee_getqcnstats,
++#endif
+ };
+ 
++#ifdef HAVE_DCBNL_RTNL_OPS_EXTENDED
++const struct dcbnl_rtnl_ops_ext mlx4_en_dcbnl_ops_ext = {
++	.ieee_getqcn 	= mlx4_en_dcbnl_ieee_getqcn,
++	.ieee_setqcn 	= mlx4_en_dcbnl_ieee_setqcn,
++	.ieee_getqcnstats = mlx4_en_dcbnl_ieee_getqcnstats,
++};
++#endif
++
+ const struct dcbnl_rtnl_ops mlx4_en_dcbnl_pfc_ops = {
+ 	.ieee_getpfc	= mlx4_en_dcbnl_ieee_getpfc,
+ 	.ieee_setpfc	= mlx4_en_dcbnl_ieee_setpfc,

@@ -1,0 +1,283 @@
+From: Bodong Wang <bodong@mellanox.com>
+Subject: [PATCH] BACKPORT:
+ drivers/net/ethernet/mellanox/mlx5/core/en/tc_tun_geneve.c
+
+Change-Id: I5afa78e9efbdf22dafa095f197b733b3ff3b7ac6
+---
+ .../ethernet/mellanox/mlx5/core/en/tc_tun_geneve.c | 103 ++++++++++++++++++---
+ 1 file changed, 92 insertions(+), 11 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en/tc_tun_geneve.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en/tc_tun_geneve.c
+@@ -1,6 +1,8 @@
+ // SPDX-License-Identifier: GPL-2.0 OR Linux-OpenIB
+ /* Copyright (c) 2018 Mellanox Technologies. */
+ 
++#ifdef HAVE_FLOW_DISSECTOR_KEY_ENC_OPTS
++
+ #include <net/geneve.h>
+ #include "lib/geneve.h"
+ #include "en/tc_tun.h"
+@@ -20,10 +22,19 @@ static int mlx5e_tc_tun_calc_hlen_geneve
+ }
+ 
+ static int mlx5e_tc_tun_check_udp_dport_geneve(struct mlx5e_priv *priv,
+-					       struct tc_cls_flower_offload *f)
++					       struct tc_cls_flower_offload *f
++#ifndef HAVE_TC_SETUP_FLOW_ACTION
++					      , struct flow_rule *rule
++#endif
++					     )
++
+ {
++#ifdef HAVE_TC_SETUP_FLOW_ACTION
+ 	struct flow_rule *rule = tc_cls_flower_offload_flow_rule(f);
++#endif
++#ifdef HAVE_TC_CLS_OFFLOAD_EXTACK
+ 	struct netlink_ext_ack *extack = f->common.extack;
++#endif
+ 	struct flow_match_ports enc_ports;
+ 
+ 	if (!flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ENC_PORTS))
+@@ -35,8 +46,10 @@ static int mlx5e_tc_tun_check_udp_dport_
+ 	 * port, so udp dst port must match.
+ 	 */
+ 	if (be16_to_cpu(enc_ports.key->dst) != GENEVE_UDP_PORT) {
++#ifdef HAVE_TC_CLS_OFFLOAD_EXTACK
+ 		NL_SET_ERR_MSG_MOD(extack,
+ 				   "Matched UDP dst port is not registered as a GENEVE port");
++#endif
+ 		netdev_warn(priv->netdev,
+ 			    "UDP port %d is not registered as a GENEVE port\n",
+ 			    be16_to_cpu(enc_ports.key->dst));
+@@ -50,21 +63,37 @@ static int mlx5e_tc_tun_parse_udp_ports_
+ 					       struct mlx5_flow_spec *spec,
+ 					       struct tc_cls_flower_offload *f,
+ 					       void *headers_c,
+-					       void *headers_v)
++					       void *headers_v
++#ifndef HAVE_TC_SETUP_FLOW_ACTION
++					       , struct flow_rule *rule
++#endif
++					      )
+ {
+ 	int err;
+ 
+-	err = mlx5e_tc_tun_parse_udp_ports(priv, spec, f, headers_c, headers_v);
++	err = mlx5e_tc_tun_parse_udp_ports(priv, spec, f, headers_c, headers_v
++#ifndef HAVE_TC_SETUP_FLOW_ACTION
++					   , rule
++#endif
++					  );
++
+ 	if (err)
+ 		return err;
+ 
+-	return mlx5e_tc_tun_check_udp_dport_geneve(priv, f);
++	return mlx5e_tc_tun_check_udp_dport_geneve(priv, f
++#ifndef HAVE_TC_SETUP_FLOW_ACTION
++		, rule
++#endif
++		);
+ }
+ 
+ static int mlx5e_tc_tun_init_encap_attr_geneve(struct net_device *tunnel_dev,
+ 					       struct mlx5e_priv *priv,
+-					       struct mlx5e_encap_entry *e,
+-					       struct netlink_ext_ack *extack)
++					       struct mlx5e_encap_entry *e
++#ifdef HAVE_TC_CLS_OFFLOAD_EXTACK
++					       , struct netlink_ext_ack *extack
++#endif
++					      )
+ {
+ 	e->tunnel = &geneve_tunnel;
+ 
+@@ -122,10 +151,18 @@ static int mlx5e_gen_ip_tunnel_header_ge
+ 
+ static int mlx5e_tc_tun_parse_geneve_vni(struct mlx5e_priv *priv,
+ 					 struct mlx5_flow_spec *spec,
+-					 struct tc_cls_flower_offload *f)
++					 struct tc_cls_flower_offload *f
++#ifndef HAVE_TC_SETUP_FLOW_ACTION
++					 , struct flow_rule *rule
++#endif
++					)
+ {
++#ifdef HAVE_TC_SETUP_FLOW_ACTION
+ 	struct flow_rule *rule = tc_cls_flower_offload_flow_rule(f);
++#endif
++#ifdef HAVE_TC_CLS_OFFLOAD_EXTACK
+ 	struct netlink_ext_ack *extack = f->common.extack;
++#endif
+ 	struct flow_match_enc_keyid enc_keyid;
+ 	void *misc_c, *misc_v;
+ 
+@@ -141,7 +178,9 @@ static int mlx5e_tc_tun_parse_geneve_vni
+ 		return 0;
+ 
+ 	if (!MLX5_CAP_ESW_FLOWTABLE_FDB(priv->mdev, ft_field_support.outer_geneve_vni)) {
++#ifdef HAVE_TC_CLS_OFFLOAD_EXTACK
+ 		NL_SET_ERR_MSG_MOD(extack, "Matching on GENEVE VNI is not supported");
++#endif
+ 		netdev_warn(priv->netdev, "Matching on GENEVE VNI is not supported\n");
+ 		return -EOPNOTSUPP;
+ 	}
+@@ -154,12 +193,20 @@ static int mlx5e_tc_tun_parse_geneve_vni
+ 
+ static int mlx5e_tc_tun_parse_geneve_options(struct mlx5e_priv *priv,
+ 					     struct mlx5_flow_spec *spec,
+-					     struct tc_cls_flower_offload *f)
++					     struct tc_cls_flower_offload *f
++#ifndef HAVE_TC_SETUP_FLOW_ACTION
++					     , struct flow_rule *rule
++#endif
++					    )
+ {
+ 	u8 max_tlv_option_data_len = MLX5_CAP_GEN(priv->mdev, max_geneve_tlv_option_data_len);
+ 	u8 max_tlv_options = MLX5_CAP_GEN(priv->mdev, max_geneve_tlv_options);
++#ifdef HAVE_TC_SETUP_FLOW_ACTION
+ 	struct flow_rule *rule = tc_cls_flower_offload_flow_rule(f);
++#endif
++#ifdef HAVE_TC_CLS_OFFLOAD_EXTACK
+ 	struct netlink_ext_ack *extack = f->common.extack;
++#endif
+ 	void *misc_c, *misc_v, *misc_3_c, *misc_3_v;
+ 	struct geneve_opt *option_key, *option_mask;
+ 	__be32 opt_data_key = 0, opt_data_mask = 0;
+@@ -179,8 +226,10 @@ static int mlx5e_tc_tun_parse_geneve_opt
+ 	if (memchr_inv(&enc_opts.mask->data, 0, sizeof(enc_opts.mask->data)) &&
+ 	    !MLX5_CAP_ESW_FLOWTABLE_FDB(priv->mdev,
+ 					ft_field_support.geneve_tlv_option_0_data)) {
++#ifdef HAVE_TC_CLS_OFFLOAD_EXTACK
+ 		NL_SET_ERR_MSG_MOD(extack,
+ 				   "Matching on GENEVE options is not supported");
++#endif
+ 		netdev_warn(priv->netdev,
+ 			    "Matching on GENEVE options is not supported\n");
+ 		return -EOPNOTSUPP;
+@@ -189,8 +238,10 @@ static int mlx5e_tc_tun_parse_geneve_opt
+ 	/* make sure that we're talking about GENEVE options */
+ 
+ 	if (enc_opts.key->dst_opt_type != TUNNEL_GENEVE_OPT) {
++#ifdef HAVE_TC_CLS_OFFLOAD_EXTACK
+ 		NL_SET_ERR_MSG_MOD(extack,
+ 				   "Matching on GENEVE options: option type is not GENEVE");
++#endif
+ 		netdev_warn(priv->netdev,
+ 			    "Matching on GENEVE options: option type is not GENEVE\n");
+ 		return -EOPNOTSUPP;
+@@ -199,7 +250,9 @@ static int mlx5e_tc_tun_parse_geneve_opt
+ 	if (enc_opts.mask->len &&
+ 	    !MLX5_CAP_ESW_FLOWTABLE_FDB(priv->mdev,
+ 					ft_field_support.outer_geneve_opt_len)) {
++#ifdef HAVE_TC_CLS_OFFLOAD_EXTACK
+ 		NL_SET_ERR_MSG_MOD(extack, "Matching on GENEVE options len is not supported");
++#endif
+ 		netdev_warn(priv->netdev,
+ 			    "Matching on GENEVE options len is not supported\n");
+ 		return -EOPNOTSUPP;
+@@ -212,8 +265,10 @@ static int mlx5e_tc_tun_parse_geneve_opt
+ 	 */
+ 
+ 	if ((enc_opts.key->len / 4) > ((max_tlv_option_data_len + 1) * max_tlv_options)) {
++#ifdef HAVE_TC_CLS_OFFLOAD_EXTACK
+ 		NL_SET_ERR_MSG_MOD(extack,
+ 				   "Matching on GENEVE options: unsupported options len");
++#endif
+ 		netdev_warn(priv->netdev,
+ 			    "Matching on GENEVE options: unsupported options len (len=%d)\n",
+ 			    enc_opts.key->len);
+@@ -230,8 +285,10 @@ static int mlx5e_tc_tun_parse_geneve_opt
+ 		return 0;
+ 
+ 	if (option_key->length > max_tlv_option_data_len) {
++#ifdef HAVE_TC_CLS_OFFLOAD_EXTACK
+ 		NL_SET_ERR_MSG_MOD(extack,
+ 				   "Matching on GENEVE options: unsupported option len");
++#endif
+ 		netdev_warn(priv->netdev,
+ 			    "Matching on GENEVE options: unsupported option len (key=%d, mask=%d)\n",
+ 			    option_key->length, option_mask->length);
+@@ -240,8 +297,10 @@ static int mlx5e_tc_tun_parse_geneve_opt
+ 
+ 	/* data can't be all 0 - fail to offload such rule */
+ 	if (!memchr_inv(option_key->opt_data, 0, option_key->length * 4)) {
++#ifdef HAVE_TC_CLS_OFFLOAD_EXTACK
+ 		NL_SET_ERR_MSG_MOD(extack,
+ 				   "Matching on GENEVE options: can't match on 0 data field");
++#endif
+ 		netdev_warn(priv->netdev,
+ 			    "Matching on GENEVE options: can't match on 0 data field\n");
+ 		return -EOPNOTSUPP;
+@@ -253,8 +312,10 @@ static int mlx5e_tc_tun_parse_geneve_opt
+ 	/* add new GENEVE TLV options object */
+ 	res = mlx5_geneve_tlv_option_add(priv->mdev->geneve, option_key);
+ 	if (res) {
++#ifdef HAVE_TC_CLS_OFFLOAD_EXTACK
+ 		NL_SET_ERR_MSG_MOD(extack,
+ 				   "Matching on GENEVE options: failed creating TLV opt object");
++#endif
+ 		netdev_warn(priv->netdev,
+ 			    "Matching on GENEVE options: failed creating TLV opt object (class:type:len = 0x%x:0x%x:%d)\n",
+ 			    be16_to_cpu(option_key->opt_class),
+@@ -286,12 +347,16 @@ static int mlx5e_tc_tun_parse_geneve_par
+ {
+ 	void *misc_c = MLX5_ADDR_OF(fte_match_param, spec->match_criteria, misc_parameters);
+ 	void *misc_v = MLX5_ADDR_OF(fte_match_param, spec->match_value,  misc_parameters);
++#ifdef HAVE_TC_CLS_OFFLOAD_EXTACK
+ 	struct netlink_ext_ack *extack = f->common.extack;
++#endif
+ 
+ 	/* match on OAM - packets with OAM bit on should NOT be offloaded */
+ 
+ 	if (!MLX5_CAP_ESW_FLOWTABLE_FDB(priv->mdev, ft_field_support.outer_geneve_oam)) {
++#ifdef HAVE_TC_CLS_OFFLOAD_EXTACK
+ 		NL_SET_ERR_MSG_MOD(extack, "Matching on GENEVE OAM is not supported");
++#endif
+ 		netdev_warn(priv->netdev, "Matching on GENEVE OAM is not supported\n");
+ 		return -EOPNOTSUPP;
+ 	}
+@@ -313,7 +378,11 @@ static int mlx5e_tc_tun_parse_geneve(str
+ 				     struct mlx5_flow_spec *spec,
+ 				     struct tc_cls_flower_offload *f,
+ 				     void *headers_c,
+-				     void *headers_v)
++				     void *headers_v
++#ifndef HAVE_TC_SETUP_FLOW_ACTION
++				     , struct flow_rule *rule
++#endif
++				    )
+ {
+ 	int err;
+ 
+@@ -321,11 +390,21 @@ static int mlx5e_tc_tun_parse_geneve(str
+ 	if (err)
+ 		return err;
+ 
+-	err = mlx5e_tc_tun_parse_geneve_vni(priv, spec, f);
++	err = mlx5e_tc_tun_parse_geneve_vni(priv, spec, f
++#ifndef HAVE_TC_SETUP_FLOW_ACTION
++					    , rule
++#endif
++					   );
++
+ 	if (err)
+ 		return err;
+ 
+-	return mlx5e_tc_tun_parse_geneve_options(priv, spec, f);
++	return mlx5e_tc_tun_parse_geneve_options(priv, spec, f
++#ifndef HAVE_TC_SETUP_FLOW_ACTION
++						 , rule
++#endif
++						);
++
+ }
+ 
+ struct mlx5e_tc_tunnel geneve_tunnel = {
+@@ -338,3 +417,5 @@ struct mlx5e_tc_tunnel geneve_tunnel = {
+ 	.parse_udp_ports      = mlx5e_tc_tun_parse_udp_ports_geneve,
+ 	.parse_tunnel         = mlx5e_tc_tun_parse_geneve,
+ };
++
++#endif /* HAVE_FLOW_DISSECTOR_KEY_ENC_OPTS */

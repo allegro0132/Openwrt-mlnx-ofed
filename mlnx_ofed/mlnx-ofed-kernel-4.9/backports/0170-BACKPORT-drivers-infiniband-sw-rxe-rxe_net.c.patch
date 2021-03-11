@@ -1,0 +1,51 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/sw/rxe/rxe_net.c
+
+Change-Id: Idd850c744df7c96eb2c71bd3df3cb1499a711369
+---
+ drivers/infiniband/sw/rxe/rxe_net.c | 19 ++++++++++++++++++-
+ 1 file changed, 18 insertions(+), 1 deletion(-)
+
+--- a/drivers/infiniband/sw/rxe/rxe_net.c
++++ b/drivers/infiniband/sw/rxe/rxe_net.c
+@@ -117,12 +117,21 @@ static struct dst_entry *rxe_find_route6
+ 	memcpy(&fl6.daddr, daddr, sizeof(*daddr));
+ 	fl6.flowi6_proto = IPPROTO_UDP;
+ 
++#if defined(HAVE_IPV6_DST_LOOKUP_FLOW)
++	ndst = ipv6_stub->ipv6_dst_lookup_flow(sock_net(recv_sockets.sk6->sk),
++					       recv_sockets.sk6->sk, &fl6,
++					       NULL);
++	if (unlikely(IS_ERR(ndst))) {
++		pr_err_ratelimited("no route to %pI6\n", daddr);
++		return NULL;
++	}
++#else
+ 	if (unlikely(ipv6_stub->ipv6_dst_lookup(sock_net(recv_sockets.sk6->sk),
+ 						recv_sockets.sk6->sk, &ndst, &fl6))) {
+ 		pr_err_ratelimited("no route to %pI6\n", daddr);
+ 		goto put;
+ 	}
+-
++#endif /* HAVE_IPV6_DST_LOOKUP_FLOW */
+ 	if (unlikely(ndst->error)) {
+ 		pr_err("no route to %pI6\n", daddr);
+ 		goto put;
+@@ -430,9 +439,17 @@ int rxe_send(struct rxe_pkt_info *pkt, s
+ 	atomic_inc(&pkt->qp->skb_out);
+ 
+ 	if (skb->protocol == htons(ETH_P_IP)) {
++#ifdef HAVE_IP_LOCAL_OUT_3_PARAMS
+ 		err = ip_local_out(dev_net(skb_dst(skb)->dev), skb->sk, skb);
++#else
++		err = ip_local_out(skb);
++#endif
+ 	} else if (skb->protocol == htons(ETH_P_IPV6)) {
++#ifdef HAVE_IP_LOCAL_OUT_3_PARAMS
+ 		err = ip6_local_out(dev_net(skb_dst(skb)->dev), skb->sk, skb);
++#else
++		err = ip6_local_out(skb);
++#endif
+ 	} else {
+ 		pr_err("Unknown layer 3 protocol: %d\n", skb->protocol);
+ 		atomic_dec(&pkt->qp->skb_out);

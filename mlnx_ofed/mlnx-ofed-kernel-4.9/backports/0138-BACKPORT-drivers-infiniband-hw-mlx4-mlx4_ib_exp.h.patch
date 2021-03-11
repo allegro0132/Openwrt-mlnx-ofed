@@ -1,0 +1,22 @@
+From: Alaa Hleihel <alaa@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/hw/mlx4/mlx4_ib_exp.h
+
+Change-Id: Ic00a295197dc0ea1d093ad51e5036a1581873bfc
+---
+ drivers/infiniband/hw/mlx4/mlx4_ib_exp.h | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+--- a/drivers/infiniband/hw/mlx4/mlx4_ib_exp.h
++++ b/drivers/infiniband/hw/mlx4/mlx4_ib_exp.h
+@@ -103,4 +103,11 @@ int mlx4_ib_set_qp_user_uar(struct ib_pd
+ 			  int is_exp);
+ struct ib_mr *mlx4_ib_phys_addr(struct ib_pd *pd, u64 length, u64 virt_addr,
+ 				int access_flags);
++#ifdef HAVE_MM_STRUCT_FREE_AREA_CACHE
++unsigned long mlx4_ib_exp_get_unmapped_area(struct file *file,
++					    unsigned long addr,
++					    unsigned long len, unsigned long pgoff,
++					    unsigned long flags);
++#endif
++
+ #endif

@@ -1,0 +1,35 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/core/uverbs_uapi.c
+
+Change-Id: I522d3b95f5d33de49b5a20ad96a7bfa2386aba30
+---
+ drivers/infiniband/core/uverbs_uapi.c | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+--- a/drivers/infiniband/core/uverbs_uapi.c
++++ b/drivers/infiniband/core/uverbs_uapi.c
+@@ -478,7 +478,11 @@ static void uapi_remove_range(struct uve
+ 		if (iter.index > last)
+ 			return;
+ 		kfree(rcu_dereference_protected(*slot, true));
++#if defined(HAVE_RADIX_TREE_ITER_DELETE) && defined (HAVE_RADIX_TREE_ITER_DELETE_EXPORTED)
+ 		radix_tree_iter_delete(&uapi->radix, &iter, slot);
++#else
++		radix_tree_delete(&uapi->radix, iter.index);
++#endif
+ 	}
+ }
+ 
+@@ -567,7 +571,11 @@ again:
+ 
+ 			if (method_elm->disabled) {
+ 				kfree(method_elm);
+-				radix_tree_iter_delete(&uapi->radix, &iter, slot);
++#if defined(HAVE_RADIX_TREE_ITER_DELETE) && defined (HAVE_RADIX_TREE_ITER_DELETE_EXPORTED)
++       			radix_tree_iter_delete(&uapi->radix, &iter, slot);
++#else
++			radix_tree_delete(&uapi->radix, iter.index);
++#endif
+ 			}
+ 			continue;
+ 		}

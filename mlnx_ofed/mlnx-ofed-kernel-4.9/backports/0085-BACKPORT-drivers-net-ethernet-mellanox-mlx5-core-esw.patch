@@ -1,0 +1,118 @@
+From: Vu Pham <vuhuong@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx5/core/eswitch.h
+
+Change-Id: I1dc2e043ade24ad36b11f87b2bb68025c64eb7ad
+---
+ drivers/net/ethernet/mellanox/mlx5/core/eswitch.h | 60 +++++++++++++++++++----
+ 1 file changed, 50 insertions(+), 10 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/eswitch.h
++++ b/drivers/net/ethernet/mellanox/mlx5/core/eswitch.h
+@@ -38,6 +38,7 @@
+ #include <linux/atomic.h>
+ #include <linux/if_vlan.h>
+ #include <linux/bitmap.h>
++#include <linux/hashtable.h>
+ #include <net/devlink.h>
+ #include <linux/mlx5/device.h>
+ #include <linux/mlx5/eswitch.h>
+@@ -226,8 +227,12 @@ struct mlx5_esw_offload {
+ 	struct list_head peer_flows;
+ 	struct mutex peer_mutex;
+ 	struct mutex encap_tbl_lock; /* protects encap_tbl */
+-	DECLARE_HASHTABLE(encap_tbl, 8);
+-	struct mod_hdr_tbl mod_hdr;
++#ifdef HAVE_NET_TC_ACT_TC_TUNNEL_KEY_H
++       DECLARE_HASHTABLE(encap_tbl, 8);
++#endif
++#ifdef HAVE_TCF_PEDIT_TCFP_KEYS_EX
++       struct mod_hdr_tbl mod_hdr;
++#endif
+ 	const struct mlx5_eswitch_rep_ops *rep_ops[NUM_REP_TYPES];
+ 	u8 inline_mode;
+ 	atomic64_t num_flows;
+@@ -257,7 +262,9 @@ struct mlx5_esw_handler {
+ 	atomic_t		in_progress;
+ 	struct work_struct      start_handler;
+ 	struct work_struct      stop_handler;
++#ifdef HAVE_DEVLINK_ESWITCH_MODE_SET_EXTACK
+ 	struct netlink_ext_ack	*extack;
++#endif
+ 	struct mlx5_lag		*ldev;
+ };
+ 
+@@ -387,8 +394,10 @@ int mlx5_eswitch_set_vport_rate(struct m
+ 				u32 max_rate, u32 min_rate);
+ int mlx5_eswitch_set_vepa(struct mlx5_eswitch *esw, u8 setting);
+ int mlx5_eswitch_get_vepa(struct mlx5_eswitch *esw, u8 *setting);
++#ifdef HAVE_IFLA_VF_INFO
+ int mlx5_eswitch_get_vport_config(struct mlx5_eswitch *esw,
+ 				  u16 vport, struct ifla_vf_info *ivi);
++#endif
+ int mlx5_eswitch_get_vport_stats(struct mlx5_eswitch *esw,
+ 				 u16 vport,
+ 				 struct ifla_vf_stats *vf_stats);
+@@ -513,14 +522,20 @@ struct mlx5_esw_flow_attr {
+ 	u32	chain;
+ 	u16	prio;
+ 	u32	dest_chain;
+-	struct mlx5e_tc_flow_parse_attr *parse_attr;
++       struct mlx5e_tc_flow_parse_attr *parse_attr;
+ };
+ 
+-int mlx5_devlink_eswitch_mode_set(struct devlink *devlink, u16 mode,
+-				  struct netlink_ext_ack *extack);
++int mlx5_devlink_eswitch_mode_set(struct devlink *devlink, u16 mode
++#ifdef HAVE_DEVLINK_ESWITCH_MODE_SET_EXTACK
++				  , struct netlink_ext_ack *extack
++#endif
++				  );
+ int mlx5_devlink_eswitch_mode_get(struct devlink *devlink, u16 *mode);
+-int mlx5_devlink_eswitch_inline_mode_set(struct devlink *devlink, u8 mode,
+-					 struct netlink_ext_ack *extack);
++int mlx5_devlink_eswitch_inline_mode_set(struct devlink *devlink, u8 mode
++#ifdef HAVE_DEVLINK_ESWITCH_MODE_SET_EXTACK
++					, struct netlink_ext_ack *extack
++#endif
++					);
+ int mlx5_devlink_eswitch_inline_mode_get(struct devlink *devlink, u8 *mode);
+ int mlx5_eswitch_inline_mode_get(struct mlx5_eswitch *esw, u8 *mode);
+ int mlx5_eswitch_vport_modify_other_hca_cap_roce(struct mlx5_eswitch *esw,
+@@ -528,9 +543,34 @@ int mlx5_eswitch_vport_modify_other_hca_
+ int mlx5_eswitch_vport_get_other_hca_cap_roce(struct mlx5_eswitch *esw,
+ 					      struct mlx5_vport *vport, bool *value);
+ 
+-int mlx5_devlink_eswitch_encap_mode_set(struct devlink *devlink, u8 encap,
+-					struct netlink_ext_ack *extack);
+-int mlx5_devlink_eswitch_encap_mode_get(struct devlink *devlink, u8 *encap);
++int mlx5_devlink_eswitch_encap_mode_set(struct devlink *devlink,
++#ifdef HAVE_DEVLINK_HAS_ESWITCH_ENCAP_MODE_SET_GET_WITH_ENUM
++					enum devlink_eswitch_encap_mode encap
++#else
++					u8 encap
++#endif
++#ifdef HAVE_DEVLINK_ESWITCH_MODE_SET_EXTACK
++					, struct netlink_ext_ack *extack
++#endif
++				       );
++int mlx5_devlink_eswitch_encap_mode_get(struct devlink *devlink,
++#ifdef HAVE_DEVLINK_HAS_ESWITCH_ENCAP_MODE_SET_GET_WITH_ENUM
++					enum devlink_eswitch_encap_mode *encap);
++#else
++					u8 *encap);
++#endif
++int mlx5_devlink_eswitch_uplink_rep_mode_set(struct devlink *devlink, u8 mode
++#ifdef HAVE_DEVLINK_ESWITCH_MODE_SET_EXTACK
++					, struct netlink_ext_ack *extack
++#endif
++				       );
++
++int mlx5_devlink_eswitch_steering_mode_set(struct devlink *devlink,
++					   enum devlink_eswitch_steering_mode mode);
++int mlx5_devlink_eswitch_steering_mode_get(struct devlink *devlink,
++					   enum devlink_eswitch_steering_mode *mode);
++
++int mlx5_devlink_eswitch_uplink_rep_mode_get(struct devlink *devlink, u8 *mode);
+ void *mlx5_eswitch_get_uplink_priv(struct mlx5_eswitch *esw, u8 rep_type);
+ 
+ int mlx5_eswitch_add_vlan_action(struct mlx5_eswitch *esw,

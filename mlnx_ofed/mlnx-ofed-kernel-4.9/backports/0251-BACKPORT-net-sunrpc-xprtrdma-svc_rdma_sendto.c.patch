@@ -1,0 +1,88 @@
+From: Vasily Philipov <vasilyf@mellanox.com>
+Subject: [PATCH] BACKPORT: net/sunrpc/xprtrdma/svc_rdma_sendto.c
+
+Change-Id: Ia6981ee590ebff525f84d7df82394dd0527f8afa
+Signed-off-by: Vasily Philipov <vasilyf@mellanox.com>
+---
+ net/sunrpc/xprtrdma/svc_rdma_sendto.c | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+--- a/net/sunrpc/xprtrdma/svc_rdma_sendto.c
++++ b/net/sunrpc/xprtrdma/svc_rdma_sendto.c
+@@ -110,7 +110,10 @@
+ #include <linux/sunrpc/svc_rdma.h>
+ 
+ #include "xprt_rdma.h"
++
++#ifdef HAVE_TRACE_RPCRDMA_H
+ #include <trace/events/rpcrdma.h>
++#endif
+ 
+ #define RPCDBG_FACILITY	RPCDBG_SVCXPRT
+ 
+@@ -261,7 +264,9 @@ static void svc_rdma_wc_send(struct ib_c
+ 	struct ib_cqe *cqe = wc->wr_cqe;
+ 	struct svc_rdma_send_ctxt *ctxt;
+ 
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_svcrdma_wc_send(wc);
++#endif
+ 
+ 	atomic_inc(&rdma->sc_sq_avail);
+ 	wake_up(&rdma->sc_send_wait);
+@@ -295,19 +300,25 @@ int svc_rdma_send(struct svcxprt_rdma *r
+ 	while (1) {
+ 		if ((atomic_dec_return(&rdma->sc_sq_avail) < 0)) {
+ 			atomic_inc(&rdma_stat_sq_starve);
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 			trace_svcrdma_sq_full(rdma);
++#endif
+ 			atomic_inc(&rdma->sc_sq_avail);
+ 			wait_event(rdma->sc_send_wait,
+ 				   atomic_read(&rdma->sc_sq_avail) > 1);
+ 			if (test_bit(XPT_CLOSE, &rdma->sc_xprt.xpt_flags))
+ 				return -ENOTCONN;
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 			trace_svcrdma_sq_retry(rdma);
++#endif
+ 			continue;
+ 		}
+ 
+ 		svc_xprt_get(&rdma->sc_xprt);
+ 		ret = ib_post_send(rdma->sc_qp, wr, NULL);
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 		trace_svcrdma_post_send(wr, ret);
++#endif
+ 		if (ret) {
+ 			set_bit(XPT_CLOSE, &rdma->sc_xprt.xpt_flags);
+ 			svc_xprt_put(&rdma->sc_xprt);
+@@ -499,7 +510,9 @@ static int svc_rdma_dma_map_page(struct
+ 	return 0;
+ 
+ out_maperr:
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_svcrdma_dma_map_page(rdma, page);
++#endif
+ 	return -EIO;
+ }
+ 
+@@ -785,7 +798,9 @@ static int svc_rdma_send_error_msg(struc
+ 	int ret;
+ 
+ 	p = ctxt->sc_xprt_buf;
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_svcrdma_err_chunk(*p);
++#endif
+ 	p += 3;
+ 	*p++ = rdma_error;
+ 	*p   = err_chunk;
+@@ -891,7 +906,9 @@ out:
+  err1:
+ 	svc_rdma_send_ctxt_put(rdma, sctxt);
+  err0:
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_svcrdma_send_failed(rqstp, ret);
++#endif
+ 	set_bit(XPT_CLOSE, &xprt->xpt_flags);
+ 	ret = -ENOTCONN;
+ 	goto out;

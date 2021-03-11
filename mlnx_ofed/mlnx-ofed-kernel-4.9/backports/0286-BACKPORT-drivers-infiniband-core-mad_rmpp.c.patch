@@ -1,0 +1,24 @@
+From: Jack Morgenstein <jackm@dev.mellanox.co.il>
+Subject: [PATCH] BACKPORT: drivers/infiniband/core/mad_rmpp.c
+
+Change-Id: I5c147fde401005e813cd8c53a411923f10c3495c
+---
+ drivers/infiniband/core/mad_rmpp.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+--- a/drivers/infiniband/core/mad_rmpp.c
++++ b/drivers/infiniband/core/mad_rmpp.c
+@@ -96,8 +96,13 @@ void ib_cancel_rmpp_recvs(struct ib_mad_
+ 		if (rmpp_recv->state != RMPP_STATE_COMPLETE)
+ 			ib_free_recv_mad(rmpp_recv->rmpp_wc);
+ 		rmpp_recv->state = RMPP_STATE_CANCELING;
++#ifdef HAVE___CANCEL_DELAYED_WORK
++		__cancel_delayed_work(&rmpp_recv->timeout_work);
++		__cancel_delayed_work(&rmpp_recv->cleanup_work);
++#else
+ 		cancel_delayed_work(&rmpp_recv->timeout_work);
+ 		cancel_delayed_work(&rmpp_recv->cleanup_work);
++#endif
+ 	}
+ 	spin_unlock_irqrestore(&agent->lock, flags);
+ 

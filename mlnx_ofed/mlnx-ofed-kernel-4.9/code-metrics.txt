@@ -1,0 +1,9 @@
+
+[36mcompat-rdma code metrics[00m
+
+[35m    358776[00m - Total upstream lines of code being pulled
+
+Base tree: [01;32mlinux.git[00m
+Base tree version: [35mrc4[00m
+compat.git: [36mcompat-mlnx_ofed[00m
+compat-rdma release: [01;33madff6128c4bf[00m

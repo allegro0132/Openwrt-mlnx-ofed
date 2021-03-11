@@ -1,0 +1,22 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/core/ud_header.c
+
+Change-Id: I18e02a84fbf5eda497461b377cd4a29ff5e760a1
+---
+ drivers/infiniband/core/ud_header.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+--- a/drivers/infiniband/core/ud_header.c
++++ b/drivers/infiniband/core/ud_header.c
+@@ -34,7 +34,11 @@
+ #include <linux/errno.h>
+ #include <linux/string.h>
+ #include <linux/export.h>
++#ifdef HAVE_UAPI_LINUX_IF_ETHER_H
++#include <uapi/linux/if_ether.h>
++#else
+ #include <linux/if_ether.h>
++#endif
+ #include <linux/ip.h>
+ 
+ #include <rdma/ib_pack.h>

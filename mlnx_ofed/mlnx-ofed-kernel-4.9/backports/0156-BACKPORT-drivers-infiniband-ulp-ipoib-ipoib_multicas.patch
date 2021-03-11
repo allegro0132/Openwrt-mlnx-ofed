@@ -1,0 +1,53 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/ulp/ipoib/ipoib_multicast.c
+
+Change-Id: I19e26717b197c67dc375d1153a79cd972e0574b8
+---
+ drivers/infiniband/ulp/ipoib/ipoib_multicast.c | 24 ++++++++++++++++++++----
+ 1 file changed, 20 insertions(+), 4 deletions(-)
+
+--- a/drivers/infiniband/ulp/ipoib/ipoib_multicast.c
++++ b/drivers/infiniband/ulp/ipoib/ipoib_multicast.c
+@@ -884,7 +884,11 @@ void ipoib_mcast_restart_task(struct wor
+ 	struct ipoib_dev_priv *priv =
+ 		container_of(work, struct ipoib_dev_priv, restart_task);
+ 	struct net_device *dev = priv->dev;
++#ifdef HAVE_NETDEV_FOR_EACH_MC_ADDR
+ 	struct netdev_hw_addr *ha;
++#else
++	struct dev_mc_list *mclist;
++#endif
+ 	struct ipoib_mcast *mcast, *tmcast;
+ 	LIST_HEAD(remove_list);
+ 	struct ib_sa_mcmember_rec rec;
+@@ -912,14 +916,26 @@ void ipoib_mcast_restart_task(struct wor
+ 		clear_bit(IPOIB_MCAST_FLAG_FOUND, &mcast->flags);
+ 
+ 	/* Mark all of the entries that are found or don't exist */
+-	netdev_for_each_mc_addr(ha, dev) {
++#ifdef HAVE_NETDEV_FOR_EACH_MC_ADDR
++       netdev_for_each_mc_addr(ha, dev) {
++#else
++		for (mclist = dev->mc_list; mclist; mclist = mclist->next) {
++#endif
++
+ 		union ib_gid mgid;
+ 
+-		if (!ipoib_mcast_addr_is_valid(ha->addr, dev->broadcast))
+-			continue;
++#ifdef HAVE_NETDEV_FOR_EACH_MC_ADDR
++       	if (!ipoib_mcast_addr_is_valid(ha->addr, dev->broadcast))
++       		continue;
+ 
+-		memcpy(mgid.raw, ha->addr + 4, sizeof(mgid));
++       	memcpy(mgid.raw, ha->addr + 4, sizeof(mgid));
++
++#else
++		if (!ipoib_mcast_addr_is_valid(mclist->dmi_addr, dev->broadcast))
++			continue;
+ 
++		memcpy(mgid.raw, mclist->dmi_addr + 4, sizeof mgid);
++#endif
+ 		mcast = __ipoib_mcast_find(dev, &mgid);
+ 		if (!mcast || test_bit(IPOIB_MCAST_FLAG_SENDONLY, &mcast->flags)) {
+ 			struct ipoib_mcast *nmcast;

@@ -1,0 +1,27 @@
+From: Israel Rukshin <israelr@mellanox.com>
+Subject: [PATCH] BACKPORT: include/linux/nvme.h
+
+Change-Id: I82c39c5e9db3140a6b9050682224eadb66c00128
+---
+ include/linux/nvme.h | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+--- a/include/linux/nvme.h
++++ b/include/linux/nvme.h
+@@ -4,6 +4,11 @@
+  * Copyright (c) 2011-2014, Intel Corporation.
+  */
+ 
++/* build vs. Non-MLNX_OFED .h */
++#if 0
++#include_next <linux/nvme.h>
++#else
++
+ #ifndef _LINUX_NVME_H
+ #define _LINUX_NVME_H
+ 
+@@ -1323,3 +1328,4 @@ struct nvme_completion {
+ #define NVME_TERTIARY(ver)	((ver) & 0xff)
+ 
+ #endif /* _LINUX_NVME_H */
++#endif /* build vs. Non-MLNX_OFED .h */

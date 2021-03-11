@@ -1,0 +1,200 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx4/cmd.c
+
+Change-Id: I1de3d48f68e17620dead9cc2dc2e419368b1cf0a
+---
+ drivers/net/ethernet/mellanox/mlx4/cmd.c | 79 +++++++++++++++++++++++++++++++-
+ 1 file changed, 78 insertions(+), 1 deletion(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx4/cmd.c
++++ b/drivers/net/ethernet/mellanox/mlx4/cmd.c
+@@ -2117,8 +2117,10 @@ static int mlx4_master_activate_admin_st
+ 	int port, err;
+ 	struct mlx4_vport_state *vp_admin;
+ 	struct mlx4_vport_oper_state *vp_oper;
++#ifdef HAVE_ETH_P_8021AD
+ 	struct mlx4_slave_state *slave_state =
+ 		&priv->mfunc.master.slave_state[slave];
++#endif
+ 	struct mlx4_active_ports actv_ports = mlx4_get_active_ports(
+ 			&priv->dev, slave);
+ 	int min_port = find_first_bit(actv_ports.ports,
+@@ -2160,13 +2162,16 @@ static int mlx4_master_activate_admin_st
+ 					return err;
+ 				}
+ 
++#ifdef HAVE_ETH_P_8021AD
+ 				if (vp_admin->vlan_proto != htons(ETH_P_8021AD) ||
+ 				    slave_state->vst_qinq_supported) {
++#endif
+ 					vp_oper->state.vlan_proto   = vp_admin->vlan_proto;
+ 					vp_oper->state.default_vlan = vp_admin->default_vlan;
+ 					vp_oper->state.default_qos  = vp_admin->default_qos;
++#ifdef HAVE_ETH_P_8021AD
+ 				}
+-
++#endif
+ 
+ 				mlx4_dbg((&(priv->dev)), "alloc vlan %d idx  %d slave %d port %d\n",
+ 					 (int)(vp_oper->state.default_vlan),
+@@ -2843,13 +2848,23 @@ struct mlx4_cmd_mailbox *mlx4_alloc_cmd_
+ 	if (!mailbox)
+ 		return ERR_PTR(-ENOMEM);
+ 
++#ifdef HAVE_DMA_POOL_ZALLOC
+ 	mailbox->buf = dma_pool_zalloc(mlx4_priv(dev)->cmd.pool, GFP_KERNEL,
++#elif defined(HAVE_PCI_POOL_ZALLOC)
++	mailbox->buf = pci_pool_zalloc(mlx4_priv(dev)->cmd.pool, GFP_KERNEL,
++#else
++	mailbox->buf = pci_pool_alloc(mlx4_priv(dev)->cmd.pool, GFP_KERNEL,
++#endif
+ 				       &mailbox->dma);
+ 	if (!mailbox->buf) {
+ 		kfree(mailbox);
+ 		return ERR_PTR(-ENOMEM);
+ 	}
+ 
++#if !defined(HAVE_PCI_POOL_ZALLOC) && !defined(HAVE_DMA_POOL_ZALLOC)
++	memset(mailbox->buf, 0, MLX4_MAILBOX_SIZE);
++#endif
++
+ 	return mailbox;
+ }
+ EXPORT_SYMBOL_GPL(mlx4_alloc_cmd_mailbox);
+@@ -3145,7 +3160,9 @@ int mlx4_set_vf_vlan(struct mlx4_dev *de
+ {
+ 	struct mlx4_priv *priv = mlx4_priv(dev);
+ 	struct mlx4_vport_state *vf_admin;
++#ifdef HAVE_ETH_P_8021AD
+ 	struct mlx4_slave_state *slave_state;
++#endif
+ 	struct mlx4_vport_oper_state *vf_oper;
+ 	int slave;
+ 
+@@ -3156,6 +3173,7 @@ int mlx4_set_vf_vlan(struct mlx4_dev *de
+ 	if ((vlan > 4095) || (qos > 7))
+ 		return -EINVAL;
+ 
++#ifdef HAVE_NETIF_F_HW_VLAN_STAG_RX
+ 	if (proto == htons(ETH_P_8021AD) &&
+ 	    !(dev->caps.flags2 & MLX4_DEV_CAP_FLAG2_SVLAN_BY_QP))
+ 		return -EPROTONOSUPPORT;
+@@ -3167,17 +3185,23 @@ int mlx4_set_vf_vlan(struct mlx4_dev *de
+ 	if ((proto == htons(ETH_P_8021AD)) &&
+ 	    ((vlan == 0) || (vlan == MLX4_VGT)))
+ 		return -EINVAL;
++#else
++	if (proto != htons(ETH_P_8021Q))
++		return -EPROTONOSUPPORT;
++#endif
+ 
+ 	slave = mlx4_get_slave_indx(dev, vf);
+ 	if (slave < 0)
+ 		return -EINVAL;
+ 
++#ifdef HAVE_ETH_P_8021AD
+ 	slave_state = &priv->mfunc.master.slave_state[slave];
+ 	if ((proto == htons(ETH_P_8021AD)) && (slave_state->active) &&
+ 	    (!slave_state->vst_qinq_supported)) {
+ 		mlx4_err(dev, "vf %d does not support VST QinQ mode\n", vf);
+ 		return -EPROTONOSUPPORT;
+ 	}
++#endif
+ 	port = mlx4_slaves_closest_port(dev, slave, port);
+ 	vf_admin = &priv->mfunc.master.vf_admin[slave].vport[port];
+ 	vf_oper = &priv->mfunc.master.vf_oper[slave].vport[port];
+@@ -3209,9 +3233,13 @@ int mlx4_set_vf_vlan(struct mlx4_dev *de
+ 	/* Try to activate new vf state without restart,
+ 	 * this option is not supported while moving to VST QinQ mode.
+ 	 */
++#ifdef HAVE_NETIF_F_HW_VLAN_STAG_RX
+ 	if ((proto == htons(ETH_P_8021AD) &&
+ 	     vf_oper->state.vlan_proto != proto) ||
+ 	    mlx4_master_immediate_activate_vlan_qos(priv, slave, port))
++#else
++	if (mlx4_master_immediate_activate_vlan_qos(priv, slave, port))
++#endif
+ 		mlx4_info(dev,
+ 			  "updating vf %d port %d config will take effect on next VF restart\n",
+ 			  vf, port);
+@@ -3337,6 +3365,7 @@ int mlx4_set_vf_spoofchk(struct mlx4_dev
+ }
+ EXPORT_SYMBOL_GPL(mlx4_set_vf_spoofchk);
+ 
++#ifdef HAVE_NDO_SET_VF_MAC
+ int mlx4_get_vf_config(struct mlx4_dev *dev, int port, int vf, struct ifla_vf_info *ivf)
+ {
+ 	struct mlx4_priv *priv = mlx4_priv(dev);
+@@ -3363,20 +3392,36 @@ int mlx4_get_vf_config(struct mlx4_dev *
+ 
+ 	ivf->vlan		= s_info->default_vlan;
+ 	ivf->qos		= s_info->default_qos;
++#ifdef HAVE_VF_VLAN_PROTO
+ 	ivf->vlan_proto		= s_info->vlan_proto;
++#endif
+ 
++#ifdef HAVE_VF_TX_RATE_LIMITS
+ 	if (mlx4_is_vf_vst_and_prio_qos(dev, port, s_info))
+ 		ivf->max_tx_rate = s_info->tx_rate;
+ 	else
+ 		ivf->max_tx_rate = 0;
+ 
+ 	ivf->min_tx_rate	= 0;
++#else
++#ifdef HAVE_VF_TX_RATE
++	if (mlx4_is_vf_vst_and_prio_qos(dev, port, s_info))
++		ivf->tx_rate = s_info->tx_rate;
++	else
++		ivf->tx_rate = 0;
++#endif
++#endif
++#ifdef HAVE_VF_INFO_SPOOFCHK
+ 	ivf->spoofchk		= s_info->spoofchk;
++#endif
++#ifdef HAVE_LINKSTATE
+ 	ivf->linkstate		= s_info->link_state;
++#endif
+ 
+ 	return 0;
+ }
+ EXPORT_SYMBOL_GPL(mlx4_get_vf_config);
++#endif
+ 
+ int mlx4_set_vf_link_state(struct mlx4_dev *dev, int port, int vf, int link_state)
+ {
+@@ -3881,3 +3926,35 @@ ssize_t mlx4_get_vf_rate(struct mlx4_dev
+ 	return len;
+ }
+ EXPORT_SYMBOL_GPL(mlx4_get_vf_rate);
++
++#if (defined(HAVE_NETIF_F_HW_VLAN_STAG_RX) && !defined(HAVE_VF_VLAN_PROTO))
++ssize_t mlx4_get_vf_vlan_info(struct mlx4_dev *dev, int port, int vf, char *buf)
++{
++	int slave;
++	ssize_t len = 0;
++	struct mlx4_vport_state *s_info;
++	struct mlx4_priv *priv = mlx4_priv(dev);
++
++	if (!mlx4_is_master(dev) ||
++	    !(dev->caps.flags2 & MLX4_DEV_CAP_FLAG2_SVLAN_BY_QP))
++		return -EOPNOTSUPP;
++
++	slave = mlx4_get_slave_indx(dev, vf);
++	if (slave < 0)
++		return -EINVAL;
++
++	s_info = &priv->mfunc.master.vf_admin[slave].vport[port];
++	if (s_info->default_vlan)
++		len += sprintf(&buf[len], "vlan %d", s_info->default_vlan);
++	if (s_info->default_qos)
++		len += sprintf(&buf[len], ", qos %d", s_info->default_qos);
++	if (s_info->vlan_proto == htons(ETH_P_8021AD))
++		len += sprintf(&buf[len], ", vlan protocol 802.1ad");
++	else if (s_info->default_vlan != MLX4_VGT)
++		len += sprintf(&buf[len], ", vlan protocol 802.1Q");
++	len += sprintf(&buf[len], "\n");
++
++      return len;
++}
++EXPORT_SYMBOL_GPL(mlx4_get_vf_vlan_info);
++#endif

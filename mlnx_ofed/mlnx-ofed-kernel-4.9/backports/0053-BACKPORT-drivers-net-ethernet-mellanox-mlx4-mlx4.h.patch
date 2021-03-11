@@ -1,0 +1,80 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx4/mlx4.h
+
+Change-Id: I0a9fca4ea2b591e57bdc652bc48774ba55e5120f
+---
+ drivers/net/ethernet/mellanox/mlx4/mlx4.h | 22 ++++++++++++++++++++--
+ 1 file changed, 20 insertions(+), 2 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx4/mlx4.h
++++ b/drivers/net/ethernet/mellanox/mlx4/mlx4.h
+@@ -46,7 +46,9 @@
+ #include <linux/workqueue.h>
+ #include <linux/interrupt.h>
+ #include <linux/spinlock.h>
++#ifdef HAVE_DEVLINK_H
+ #include <net/devlink.h>
++#endif
+ #include <linux/rwsem.h>
+ 
+ #include <linux/mlx4/device.h>
+@@ -872,7 +874,9 @@ struct mlx4_port_info {
+ 	struct mlx4_roce_info	roce;
+ 	int			base_qpn;
+ 	struct cpu_rmap		*rmap;
++#ifdef HAVE_DEVLINK_H
+ 	struct devlink_port	devlink_port;
++#endif
+ };
+ 
+ struct mlx4_sense {
+@@ -1001,7 +1005,11 @@ void mlx4_cleanup_cq_table(struct mlx4_d
+ void mlx4_cleanup_qp_table(struct mlx4_dev *dev);
+ void mlx4_cleanup_srq_table(struct mlx4_dev *dev);
+ void mlx4_cleanup_mcg_table(struct mlx4_dev *dev);
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ int __mlx4_qp_alloc_icm(struct mlx4_dev *dev, int qpn);
++#else
++int __mlx4_qp_alloc_icm(struct mlx4_dev *dev, int qpn, gfp_t gfp);
++#endif
+ void __mlx4_qp_free_icm(struct mlx4_dev *dev, int qpn);
+ int __mlx4_cq_alloc_icm(struct mlx4_dev *dev, int *cqn);
+ void __mlx4_cq_free_icm(struct mlx4_dev *dev, int cqn);
+@@ -1009,7 +1017,11 @@ int __mlx4_srq_alloc_icm(struct mlx4_dev
+ void __mlx4_srq_free_icm(struct mlx4_dev *dev, int srqn);
+ int __mlx4_mpt_reserve(struct mlx4_dev *dev);
+ void __mlx4_mpt_release(struct mlx4_dev *dev, u32 index);
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ int __mlx4_mpt_alloc_icm(struct mlx4_dev *dev, u32 index);
++#else
++int __mlx4_mpt_alloc_icm(struct mlx4_dev *dev, u32 index, gfp_t gfp);
++#endif
+ void __mlx4_mpt_free_icm(struct mlx4_dev *dev, u32 index);
+ u32 __mlx4_alloc_mtt_range(struct mlx4_dev *dev, int order);
+ void __mlx4_free_mtt_range(struct mlx4_dev *dev, u32 first_seg, int order);
+@@ -1076,7 +1088,15 @@ void mlx4_crdump_proc_init(struct proc_d
+ void mlx4_crdump_proc_cleanup(struct proc_dir_entry *proc_core_dir);
+ int mlx4_crdump_init(struct mlx4_dev *dev);
+ void mlx4_crdump_end(struct mlx4_dev *dev);
++#ifdef HAVE_DEVLINK_OPS_RELOAD_UP
+ int mlx4_restart_one(struct pci_dev *pdev);
++#else
++#ifdef HAVE_DEVLINK_H
++int mlx4_restart_one(struct pci_dev *pdev, bool reload, struct devlink *devlink);
++#else
++int mlx4_restart_one(struct pci_dev *pdev);
++#endif /*HAVE_DEVLINK_H*/
++#endif /*HAVE_DEVLINK_OPS_RELOAD_UP*/
+ int mlx4_register_device(struct mlx4_dev *dev);
+ void mlx4_unregister_device(struct mlx4_dev *dev);
+ void mlx4_dispatch_event(struct mlx4_dev *dev, enum mlx4_dev_event type,
+@@ -1260,9 +1280,7 @@ void mlx4_srq_event(struct mlx4_dev *dev
+ 
+ void mlx4_enter_error_state(struct mlx4_dev_persistent *persist);
+ int mlx4_comm_internal_err(u32 slave_read);
+-
+ int mlx4_crdump_collect(struct mlx4_dev *dev);
+-
+ int mlx4_SENSE_PORT(struct mlx4_dev *dev, int port,
+ 		    enum mlx4_port_type *type);
+ void mlx4_do_sense_ports(struct mlx4_dev *dev,

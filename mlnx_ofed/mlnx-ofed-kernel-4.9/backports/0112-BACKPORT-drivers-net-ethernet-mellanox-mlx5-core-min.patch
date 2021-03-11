@@ -1,0 +1,150 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx5/core/miniflow.c
+
+Change-Id: Iec18e297e96ee83d4a7db4c65f0efa8d4589510f
+---
+ drivers/net/ethernet/mellanox/mlx5/core/miniflow.c | 59 +++++++++++++++++++++-
+ 1 file changed, 57 insertions(+), 2 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/miniflow.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/miniflow.c
+@@ -2,6 +2,9 @@
+ /* Copyright (c) 2019 Mellanox Technologies. */
+ 
+ #include <linux/atomic.h>
++#ifdef CONFIG_COMPAT_NFT_GEN_FLOW_OFFLOAD
++#include <net/netfilter/nft_gen_flow_offload.h>
++#endif
+ #include <net/tc_act/tc_pedit.h>
+ 
+ #include "lib/devcom.h"
+@@ -76,6 +79,19 @@ DEFINE_PER_CPU(struct mlx5e_miniflow *,
+ 
+ static DEFINE_SPINLOCK(miniflow_lock);
+ 
++#ifdef CONFIG_COMPAT_NFT_GEN_FLOW_OFFLOAD
++int ct_flow_offload_add(void *arg, struct list_head *head);
++int ct_flow_offload_destroy(struct list_head *head);
++void ct_flow_offload_get_stats(struct nf_gen_flow_ct_stat *ct_stat,
++			       struct list_head *head);
++
++struct flow_offload_dep_ops ct_offload_ops = {
++	.add = ct_flow_offload_add,
++	.get_stats = ct_flow_offload_get_stats,
++	.destroy = ct_flow_offload_destroy
++};
++#endif
++
+ static const struct rhashtable_params mf_ht_params = {
+ 	.head_offset = offsetof(struct mlx5e_miniflow, node),
+ 	.key_offset = offsetof(struct mlx5e_miniflow, path.cookies),
+@@ -109,7 +125,9 @@ ssize_t mlx5_show_counters_ct(char *buf)
+ 	p += _sprintf(p, buf, "nr_of_total_del_mf_succ                 : %lld\n", atomic64_read(&nr_of_total_del_mf_succ));
+ 	p += _sprintf(p, buf, "\n");
+ 	p += _sprintf(p, buf, "currently_in_hw                         : %d\n", atomic_read(&currently_in_hw));
++#ifndef CONFIG_COMPAT_NFT_GEN_FLOW_OFFLOAD
+ 	p += _sprintf(p, buf, "offloaded_flow_cnt                      : %d\n", mlx5_ct_flow_offloaded_count());
++#endif
+ 	p += _sprintf(p, buf, "\n");
+ 	p += _sprintf(p, buf, "nr_of_total_mf_err                      : %lld\n", atomic64_read(&nr_of_total_mf_err));
+ 	p += _sprintf(p, buf, "nr_of_total_mf_err_alloc_flow           : %lld\n", atomic64_read(&nr_of_total_mf_err_alloc_flow));
+@@ -572,7 +590,11 @@ static int miniflow_register_ct_tuple(st
+ 	zone = &ct_tuple->zone;
+ 	tuple = &ct_tuple->tuple;
+ 
++#ifdef CONFIG_COMPAT_NFT_GEN_FLOW_OFFLOAD
++	return nft_gen_flow_offload_add(net, zone, tuple, ct_tuple->flow);
++#else
+ 	return mlx5_ct_flow_offload_add(net, zone, tuple, ct_tuple->flow);
++#endif
+ }
+ 
+ static int miniflow_register_ct_flow(struct mlx5e_miniflow *miniflow)
+@@ -1172,19 +1194,23 @@ static int miniflow_cache_get(void)
+ 	if (!miniflow_cache)
+ 		return -ENOMEM;
+ 
++#define __WQ_LEGACY (1 << 18)
+ 	miniflow_wq = alloc_workqueue("miniflow",
+ 				      __WQ_LEGACY | WQ_MEM_RECLAIM |
+ 				      WQ_UNBOUND | WQ_HIGHPRI | WQ_SYSFS, 16);
+ 	if (!miniflow_wq)
+ 		goto err_wq;
+-
++#ifdef CONFIG_COMPAT_NFT_GEN_FLOW_OFFLOAD
++	nft_gen_flow_offload_dep_ops_register(&ct_offload_ops);
++	return 0;
++#else
+ 	if (mlx5_ct_flow_offload_table_init())
+ 		goto err_offload_table;
+-
+ 	return 0;
+ 
+ err_offload_table:
+ 	destroy_workqueue(miniflow_wq);
++#endif /* CONFIG_COMPAT_NFT_GEN_FLOW_OFFLOAD */
+ err_wq:
+ 	kmem_cache_destroy(miniflow_cache);
+ 	atomic_dec(&miniflow_cache_ref);
+@@ -1194,7 +1220,11 @@ err_wq:
+ static void miniflow_cache_put(void)
+ {
+ 	if (atomic_dec_and_test(&miniflow_cache_ref)) {
++#ifdef CONFIG_COMPAT_NFT_GEN_FLOW_OFFLOAD
++		nft_gen_flow_offload_dep_ops_unregister(&ct_offload_ops);
++#else
+ 		mlx5_ct_flow_offload_table_destroy();
++#endif
+ 		destroy_workqueue(miniflow_wq);
+ 		kmem_cache_destroy(miniflow_cache);
+ 	}
+@@ -1347,10 +1377,12 @@ int miniflow_configure_ct(struct mlx5e_p
+ 	ct_tuple->zone = *cto->zone;
+ 	ct_tuple->tuple = *cto->tuple;
+ 
++#ifdef HAVE_TC_CT_OFFLOAD_NAT
+ 	ct_tuple->nat = cto->nat;
+ 	ct_tuple->ipv4 = cto->ipv4;
+ 	ct_tuple->port = cto->port;
+ 	ct_tuple->proto = cto->proto;
++#endif
+ 
+ 	ct_tuple->flow = NULL;
+ 
+@@ -1485,6 +1517,28 @@ int ct_flow_offload_add(void *arg, struc
+ 	return 0;
+ }
+ 
++#ifdef CONFIG_COMPAT_NFT_GEN_FLOW_OFFLOAD
++/* call user to retrieve stats of this connection, statistics data is
++   written into nf_gen_flow_ct_stat */
++void ct_flow_offload_get_stats(struct nf_gen_flow_ct_stat *ct_stat,
++			       struct list_head *head)
++{
++	struct mlx5e_tc_flow *flow, *tmp;
++
++	list_for_each_entry_safe(flow, tmp, head, nft_node) {
++		struct mlx5_fc *counter = flow->dummy_counter;
++		int dir = !(flow->flags & BIT(MLX5E_TC_FLOW_FLAG_CT_ORIG));
++		u64 bytes, packets, lastuse;
++
++		if (counter) {
++			mlx5_fc_query_cached(counter, &bytes, &packets, &lastuse);
++			ct_stat[dir].bytes += bytes;
++			ct_stat[dir].packets += packets;
++			ct_stat[dir].last_used = max(ct_stat[dir].last_used, lastuse);
++		}
++	}
++}
++#else
+ void ct_flow_offload_get_stats(struct list_head *head, u64 *lastuse)
+ {
+ 	struct mlx5e_tc_flow *flow, *tmp;
+@@ -1501,6 +1555,7 @@ void ct_flow_offload_get_stats(struct li
+ 		}
+ 	}
+ }
++#endif /* CONFIG_COMPAT_NFT_GEN_FLOW_OFFLOAD */
+ 
+ static void ct_flow_offload_del(struct mlx5e_tc_flow *flow)
+ {

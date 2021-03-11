@@ -1,0 +1,30 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: include/linux/mlx4/driver.h
+
+Change-Id: Iab7b3df586eeb8b951260de5330f93a2b485ecc4
+---
+ include/linux/mlx4/driver.h | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+--- a/include/linux/mlx4/driver.h
++++ b/include/linux/mlx4/driver.h
+@@ -33,7 +33,9 @@
+ #ifndef MLX4_DRIVER_H
+ #define MLX4_DRIVER_H
+ 
++#ifdef HAVE_DEVLINK_H
+ #include <net/devlink.h>
++#endif
+ #include <linux/mlx4/device.h>
+ 
+ struct mlx4_dev;
+@@ -146,7 +148,9 @@ int mlx4_port_map_set(struct mlx4_dev *d
+ 
+ void *mlx4_get_protocol_dev(struct mlx4_dev *dev, enum mlx4_protocol proto, int port);
+ 
++#ifdef HAVE_DEVLINK_H
+ struct devlink_port *mlx4_get_devlink_port(struct mlx4_dev *dev, int port);
++#endif
+ 
+ static inline u64 mlx4_mac_to_u64(u8 *addr)
+ {

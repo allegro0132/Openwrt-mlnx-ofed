@@ -1,0 +1,81 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT:
+ drivers/net/ethernet/mellanox/mlx5/core/diag/fs_tracepoint.h
+
+Change-Id: Ic5efb4a92713f8b6423d2cd7f0a295cfdbf70eba
+---
+ .../mellanox/mlx5/core/diag/fs_tracepoint.h        | 38 ++++++++++++++++------
+ 1 file changed, 28 insertions(+), 10 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/diag/fs_tracepoint.h
++++ b/drivers/net/ethernet/mellanox/mlx5/core/diag/fs_tracepoint.h
+@@ -30,6 +30,22 @@
+  * SOFTWARE.
+  */
+ 
++
++/* Before kernel 3.14 there was a bug in kernel/trace/trace_export.c that
++ * always used %d format which causes many compilation warnings.
++ * Cast the size to int for such kernels to suppress those warnings.
++ */
++#ifdef MLX_SIZE_CAST_WA
++#undef MLX_SIZE_CAST_WA
++#endif
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,14,0))
++#define MLX_SIZE_CAST_WA (int)
++#else
++#define MLX_SIZE_CAST_WA
++#endif
++
++#ifndef MLX_DISABLE_TRACEPOINTS
++
+ #if !defined(_MLX5_FS_TP_) || defined(TRACE_HEADER_MULTI_READ)
+ #define _MLX5_FS_TP_
+ 
+@@ -106,9 +122,9 @@ TRACE_EVENT(mlx5_fs_add_fg,
+ 		__field(u32, end_index)
+ 		__field(u32, id)
+ 		__field(u8, mask_enable)
+-		__array(u32, mask_outer, MLX5_ST_SZ_DW(fte_match_set_lyr_2_4))
+-		__array(u32, mask_inner, MLX5_ST_SZ_DW(fte_match_set_lyr_2_4))
+-		__array(u32, mask_misc, MLX5_ST_SZ_DW(fte_match_set_misc))
++		__array(u32, mask_outer, MLX_SIZE_CAST_WA MLX5_ST_SZ_DW(fte_match_set_lyr_2_4))
++		__array(u32, mask_inner, MLX_SIZE_CAST_WA MLX5_ST_SZ_DW(fte_match_set_lyr_2_4))
++		__array(u32, mask_misc, MLX_SIZE_CAST_WA MLX5_ST_SZ_DW(fte_match_set_misc))
+ 	    ),
+ 	    TP_fast_assign(
+ 			   __entry->fg = fg;
+@@ -189,12 +205,12 @@ TRACE_EVENT(mlx5_fs_set_fte,
+ 		__field(u32, flow_tag)
+ 		__field(u8,  mask_enable)
+ 		__field(int, new_fte)
+-		__array(u32, mask_outer, MLX5_ST_SZ_DW(fte_match_set_lyr_2_4))
+-		__array(u32, mask_inner, MLX5_ST_SZ_DW(fte_match_set_lyr_2_4))
+-		__array(u32, mask_misc, MLX5_ST_SZ_DW(fte_match_set_misc))
+-		__array(u32, value_outer, MLX5_ST_SZ_DW(fte_match_set_lyr_2_4))
+-		__array(u32, value_inner, MLX5_ST_SZ_DW(fte_match_set_lyr_2_4))
+-		__array(u32, value_misc, MLX5_ST_SZ_DW(fte_match_set_misc))
++		__array(u32, mask_outer, MLX_SIZE_CAST_WA MLX5_ST_SZ_DW(fte_match_set_lyr_2_4))
++		__array(u32, mask_inner, MLX_SIZE_CAST_WA MLX5_ST_SZ_DW(fte_match_set_lyr_2_4))
++		__array(u32, mask_misc, MLX_SIZE_CAST_WA MLX5_ST_SZ_DW(fte_match_set_misc))
++		__array(u32, value_outer, MLX_SIZE_CAST_WA MLX5_ST_SZ_DW(fte_match_set_lyr_2_4))
++		__array(u32, value_inner, MLX_SIZE_CAST_WA MLX5_ST_SZ_DW(fte_match_set_lyr_2_4))
++		__array(u32, value_misc, MLX_SIZE_CAST_WA MLX5_ST_SZ_DW(fte_match_set_misc))
+ 	    ),
+ 	    TP_fast_assign(
+ 			   __entry->fte = fte;
+@@ -277,7 +293,7 @@ TRACE_EVENT(mlx5_fs_add_rule,
+ 		__field(u32, sw_action)
+ 		__field(u32, index)
+ 		__field(u32, counter_id)
+-		__array(u8, destination, sizeof(struct mlx5_flow_destination))
++		__array(u8, destination, MLX_SIZE_CAST_WA sizeof(struct mlx5_flow_destination))
+ 	    ),
+ 	    TP_fast_assign(
+ 			   __entry->rule = rule;
+@@ -319,3 +335,5 @@ TRACE_EVENT(mlx5_fs_del_rule,
+ #undef TRACE_INCLUDE_FILE
+ #define TRACE_INCLUDE_FILE fs_tracepoint
+ #include <trace/define_trace.h>
++
++#endif /* MLX_DISABLE_TRACEPOINTS */

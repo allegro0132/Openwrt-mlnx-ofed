@@ -1,0 +1,218 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT:
+ drivers/infiniband/ulp/ipoib/rss_tss/ipoib_main_rss.c
+
+Change-Id: Ia8c1120d32b6c2a377798ebcdc0a5af5f0bef609
+---
+ .../infiniband/ulp/ipoib/rss_tss/ipoib_main_rss.c  | 134 +++++++++++++++++----
+ 1 file changed, 111 insertions(+), 23 deletions(-)
+
+--- a/drivers/infiniband/ulp/ipoib/rss_tss/ipoib_main_rss.c
++++ b/drivers/infiniband/ulp/ipoib/rss_tss/ipoib_main_rss.c
+@@ -51,7 +51,11 @@ int ipoib_set_mode_rss(struct net_device
+ 			set_bit(IPOIB_FLAG_ADMIN_CM, &priv->flags);
+ 			ipoib_warn(priv, "enabling connected mode "
+ 				   "will cause multicast packet drops\n");
++#if defined (HAVE_NETDEV_UPDATE_FEATURES) && defined (HAVE_NDO_FIX_FEATURES)
+ 			netdev_update_features(dev);
++#else
++			dev->features &= ~(NETIF_F_IP_CSUM | NETIF_F_SG | NETIF_F_TSO);
++#endif
+ 			dev_set_mtu(dev, ipoib_cm_max_mtu(dev));
+ 			rtnl_unlock();
+ 
+@@ -73,7 +77,19 @@ int ipoib_set_mode_rss(struct net_device
+ 
+ 	if (!strcmp(buf, "datagram\n")) {
+ 		clear_bit(IPOIB_FLAG_ADMIN_CM, &priv->flags);
++#if defined (HAVE_NETDEV_UPDATE_FEATURES) && defined (HAVE_NDO_FIX_FEATURES)
+ 		netdev_update_features(dev);
++#else
++		if (priv->hca_caps & IB_DEVICE_UD_IP_CSUM)
++			dev->features |= NETIF_F_IP_CSUM;
++
++		if (priv->max_send_sge > 1)
++			dev->features |= NETIF_F_SG;
++
++		if (priv->hca_caps & IB_DEVICE_UD_TSO)
++			if (dev->features & (NETIF_F_IP_CSUM | NETIF_F_SG))
++				dev->features |= NETIF_F_TSO;
++#endif
+ 		dev_set_mtu(dev, min(priv->mcast_mtu, dev->mtu));
+ 		rtnl_unlock();
+ 		ipoib_flush_paths(dev);
+@@ -83,8 +99,26 @@ int ipoib_set_mode_rss(struct net_device
+ 	return -EINVAL;
+ }
+ 
+-static u16 ipoib_select_queue_sw_rss(struct net_device *dev, struct sk_buff *skb,
+-				     struct net_device *sb_dev)
++#ifdef NDO_SELECT_QUEUE_HAS_3_PARMS_NO_FALLBACK
++u16 ipoib_select_queue_sw_rss(struct net_device *dev, struct sk_buff *skb,
++		       struct net_device *sb_dev)
++
++#elif defined(NDO_SELECT_QUEUE_HAS_ACCEL_PRIV) || defined(HAVE_SELECT_QUEUE_FALLBACK_T)
++
++u16 ipoib_select_queue_sw_rss(struct net_device *dev, struct sk_buff *skb,
++#ifdef HAVE_SELECT_QUEUE_FALLBACK_T
++#ifdef HAVE_SELECT_QUEUE_NET_DEVICE
++		       struct net_device *sb_dev,
++#else
++		       void *accel_priv,
++#endif /* HAVE_SELECT_QUEUE_NET_DEVICE */
++		       select_queue_fallback_t fallback)
++#else
++		       void *accel_priv)
++#endif
++#else /* NDO_SELECT_QUEUE_HAS_ACCEL_PRIV || HAVE_SELECT_QUEUE_FALLBACK_T */
++u16 ipoib_select_queue_sw_rss(struct net_device *dev, struct sk_buff *skb)
++#endif
+ {
+ 	struct ipoib_dev_priv *priv = ipoib_priv(dev);
+ 	struct ipoib_pseudo_header *phdr;
+@@ -120,7 +154,13 @@ static u16 ipoib_select_queue_sw_rss(str
+ 	header->tss_qpn_mask_sz |= priv->tss_qpn_mask_sz;
+ 
+ 	/* don't use special ring in TX */
++#ifdef NDO_SELECT_QUEUE_HAS_3_PARMS_NO_FALLBACK
+ 	return netdev_pick_tx(dev, skb, NULL) % priv->tss_qp_num;
++#elif defined( HAVE_SELECT_QUEUE_FALLBACK_T_3_PARAMS)
++	return fallback(dev, skb, NULL) % priv->tss_qp_num;
++#else
++	return fallback(dev, skb) % priv->tss_qp_num;
++#endif
+ }
+ 
+ static void ipoib_timeout_rss(struct net_device *dev)
+@@ -250,6 +290,20 @@ static struct ipoib_neigh *ipoib_neigh_c
+ 	return neigh;
+ }
+ 
++#ifdef CONFIG_COMPAT_LRO_ENABLED_IPOIB
++static void ipoib_lro_setup_rss(struct ipoib_recv_ring *recv_ring,
++				struct ipoib_dev_priv *priv)
++{
++	recv_ring->lro.lro_mgr.max_aggr  = IPOIB_LRO_MAX_AGGR;
++	recv_ring->lro.lro_mgr.max_desc  = IPOIB_MAX_LRO_DESCRIPTORS;
++	recv_ring->lro.lro_mgr.lro_arr   = recv_ring->lro.lro_desc;
++	recv_ring->lro.lro_mgr.get_skb_header = get_skb_hdr;
++	recv_ring->lro.lro_mgr.features  = LRO_F_NAPI;
++	recv_ring->lro.lro_mgr.dev               = priv->dev;
++	recv_ring->lro.lro_mgr.ip_summed_aggr = CHECKSUM_UNNECESSARY;
++}
++#endif
++
+ int ipoib_dev_init_default_rss(struct net_device *dev)
+ {
+ 	struct ipoib_dev_priv *priv = ipoib_priv(dev);
+@@ -283,6 +337,9 @@ int ipoib_dev_init_default_rss(struct ne
+ 		}
+ 		recv_ring->dev = dev;
+ 		recv_ring->index = i;
++#ifdef CONFIG_COMPAT_LRO_ENABLED_IPOIB
++		ipoib_lro_setup_rss(recv_ring, priv);
++#endif
+ 		recv_ring++;
+ 		rx_allocated++;
+ 	}
+@@ -382,6 +439,7 @@ static void ipoib_ndo_uninit_rss(struct
+ 	 * ipoib_remove_one guarantees the children are removed before the
+ 	 * parent, and that is the only place where a parent can be removed.
+ 	 */
++#ifdef HAVE_NET_DEVICE_NEEDS_FREE_NETDEV
+ 	WARN_ON(!list_empty(&priv->child_intfs));
+ 
+ 	if (priv->parent) {
+@@ -391,6 +449,7 @@ static void ipoib_ndo_uninit_rss(struct
+ 		list_del(&priv->list);
+ 		up_write(&ppriv->vlan_rwsem);
+ 	}
++#endif
+ 
+ 	ipoib_dev_uninit_rss(dev);
+ 
+@@ -703,19 +762,40 @@ static const struct net_device_ops ipoib
+ 	.ndo_uninit		 = ipoib_ndo_uninit_rss,
+ 	.ndo_open		 = ipoib_open,
+ 	.ndo_stop		 = ipoib_stop,
+-	.ndo_change_mtu		 = ipoib_change_mtu,
+-	.ndo_fix_features	 = ipoib_fix_features,
+-	.ndo_start_xmit		 = ipoib_start_xmit,
+-	.ndo_select_queue	 = ipoib_select_queue_sw_rss,
+-	.ndo_tx_timeout		 = ipoib_timeout_rss,
+-	.ndo_get_stats		 = ipoib_get_stats_rss,
+-	.ndo_set_rx_mode	 = ipoib_set_mcast_list,
+-	.ndo_get_iflink		 = ipoib_get_iflink,
+-	.ndo_set_vf_link_state	 = ipoib_set_vf_link_state,
+-	.ndo_get_vf_config	 = ipoib_get_vf_config,
+-	.ndo_get_vf_stats	 = ipoib_get_vf_stats,
+-	.ndo_set_vf_guid	 = ipoib_set_vf_guid,
+-	.ndo_set_mac_address	 = ipoib_set_mac,
++#ifdef HAVE_NDO_CHANGE_MTU_EXTENDED
++	.extended.ndo_change_mtu = ipoib_change_mtu,
++#else
++       .ndo_change_mtu		 = ipoib_change_mtu,
++#endif
++#ifdef HAVE_NDO_FIX_FEATURES
++       .ndo_fix_features	 = ipoib_fix_features,
++#endif
++       .ndo_start_xmit		 = ipoib_start_xmit,
++       .ndo_select_queue	 = ipoib_select_queue_sw_rss,
++       .ndo_tx_timeout		 = ipoib_timeout_rss,
++       .ndo_get_stats		 = ipoib_get_stats_rss,
++       .ndo_set_rx_mode	 = ipoib_set_mcast_list,
++#ifdef HAVE_NDO_GET_IFLINK
++       .ndo_get_iflink		 = ipoib_get_iflink,
++#endif
++#ifdef HAVE_NETDEV_OPS_NDO_SET_VF_LINK_STATE
++       .ndo_set_vf_link_state	 = ipoib_set_vf_link_state,
++#endif
++#ifdef HAVE_NDO_SET_VF_MAC
++       .ndo_get_vf_config	 = ipoib_get_vf_config,
++#endif
++#ifdef HAVE_NDO_GET_VF_STATS
++       .ndo_get_vf_stats	 = ipoib_get_vf_stats,
++#endif
++#ifdef HAVE_NDO_SET_VF_GUID
++       .ndo_set_vf_guid	 = ipoib_set_vf_guid,
++#endif
++#if LINUX_VERSION_CODE > KERNEL_VERSION(4, 7, 0)
++       .ndo_set_mac_address	 = ipoib_set_mac,
++#endif
++#ifdef HAVE_NET_DEVICE_OPS_EXTENDED
++	.ndo_size = sizeof(struct net_device_ops),
++#endif
+ };
+ 
+ static const struct net_device_ops ipoib_netdev_ops_vf_sw_tss = {
+@@ -723,14 +803,22 @@ static const struct net_device_ops ipoib
+ 	.ndo_uninit		 = ipoib_ndo_uninit_rss,
+ 	.ndo_open		 = ipoib_open,
+ 	.ndo_stop		 = ipoib_stop,
+-	.ndo_change_mtu		 = ipoib_change_mtu,
+-	.ndo_fix_features	 = ipoib_fix_features,
+-	.ndo_start_xmit	 	 = ipoib_start_xmit,
+-	.ndo_select_queue 	 = ipoib_select_queue_sw_rss,
+-	.ndo_tx_timeout		 = ipoib_timeout_rss,
+-	.ndo_get_stats		 = ipoib_get_stats_rss,
+-	.ndo_set_rx_mode	 = ipoib_set_mcast_list,
+-	.ndo_get_iflink		 = ipoib_get_iflink,
++#ifdef HAVE_NDO_CHANGE_MTU_EXTENDED
++	.extended.ndo_change_mtu = ipoib_change_mtu,
++#else
++       .ndo_change_mtu		 = ipoib_change_mtu,
++#endif
++#ifdef HAVE_NDO_FIX_FEATURES
++       .ndo_fix_features	 = ipoib_fix_features,
++#endif
++       .ndo_start_xmit	 	 = ipoib_start_xmit,
++       .ndo_select_queue 	 = ipoib_select_queue_sw_rss,
++       .ndo_tx_timeout		 = ipoib_timeout_rss,
++       .ndo_get_stats		 = ipoib_get_stats_rss,
++       .ndo_set_rx_mode	 = ipoib_set_mcast_list,
++#ifdef HAVE_NDO_GET_IFLINK
++       .ndo_get_iflink		 = ipoib_get_iflink,
++#endif
+ };
+ 
+ const struct net_device_ops *ipoib_get_netdev_ops(struct ipoib_dev_priv *priv)

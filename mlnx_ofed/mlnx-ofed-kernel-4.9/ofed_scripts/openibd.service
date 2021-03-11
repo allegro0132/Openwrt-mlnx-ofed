@@ -1,0 +1,18 @@
+[Unit]
+Description=openibd - configure Mellanox devices
+Documentation=file:/etc/infiniband/openib.conf
+After=wickedd.service wickedd-nanny.service local-fs.target sysinit.target
+Before=network.target network.service networking.service remote-fs-pre.target
+RefuseManualStop=false
+DefaultDependencies=false
+
+[Service]
+Type=oneshot
+TimeoutSec=180
+RemainAfterExit=yes
+ExecStart=/etc/init.d/openibd start bootid=%b
+ExecStop=/etc/init.d/openibd stop
+ExecReload=/etc/init.d/openibd restart bootid=%b
+
+[Install]
+WantedBy=sysinit.target

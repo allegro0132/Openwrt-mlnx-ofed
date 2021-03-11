@@ -1,0 +1,112 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx4/qp.c
+
+Change-Id: I3c0c68056ce604dba0f8f259578b03980bb9cd8b
+---
+ drivers/net/ethernet/mellanox/mlx4/qp.c | 40 +++++++++++++++++++++++++++++++++
+ 1 file changed, 40 insertions(+)
+
+--- a/drivers/net/ethernet/mellanox/mlx4/qp.c
++++ b/drivers/net/ethernet/mellanox/mlx4/qp.c
+@@ -307,29 +307,53 @@ void mlx4_qp_release_range(struct mlx4_d
+ }
+ EXPORT_SYMBOL_GPL(mlx4_qp_release_range);
+ 
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ int __mlx4_qp_alloc_icm(struct mlx4_dev *dev, int qpn)
++#else
++int __mlx4_qp_alloc_icm(struct mlx4_dev *dev, int qpn, gfp_t gfp)
++#endif
+ {
+ 	struct mlx4_priv *priv = mlx4_priv(dev);
+ 	struct mlx4_qp_table *qp_table = &priv->qp_table;
+ 	int err;
+ 
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 	err = mlx4_table_get(dev, &qp_table->qp_table, qpn);
++#else
++	err = mlx4_table_get(dev, &qp_table->qp_table, qpn, gfp);
++#endif
+ 	if (err)
+ 		goto err_out;
+ 
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 	err = mlx4_table_get(dev, &qp_table->auxc_table, qpn);
++#else
++	err = mlx4_table_get(dev, &qp_table->auxc_table, qpn, gfp);
++#endif
+ 	if (err)
+ 		goto err_put_qp;
+ 
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 	err = mlx4_table_get(dev, &qp_table->altc_table, qpn);
++#else
++	err = mlx4_table_get(dev, &qp_table->altc_table, qpn, gfp);
++#endif
+ 	if (err)
+ 		goto err_put_auxc;
+ 
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 	err = mlx4_table_get(dev, &qp_table->rdmarc_table, qpn);
++#else
++	err = mlx4_table_get(dev, &qp_table->rdmarc_table, qpn, gfp);
++#endif
+ 	if (err)
+ 		goto err_put_altc;
+ 
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 	err = mlx4_table_get(dev, &qp_table->cmpt_table, qpn);
++#else
++	err = mlx4_table_get(dev, &qp_table->cmpt_table, qpn, gfp);
++#endif
+ 	if (err)
+ 		goto err_put_rdmarc;
+ 
+@@ -351,7 +375,11 @@ err_out:
+ 	return err;
+ }
+ 
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ static int mlx4_qp_alloc_icm(struct mlx4_dev *dev, int qpn)
++#else
++static int mlx4_qp_alloc_icm(struct mlx4_dev *dev, int qpn, gfp_t gfp)
++#endif
+ {
+ 	u64 param = 0;
+ 
+@@ -361,7 +389,11 @@ static int mlx4_qp_alloc_icm(struct mlx4
+ 				    MLX4_CMD_ALLOC_RES, MLX4_CMD_TIME_CLASS_A,
+ 				    MLX4_CMD_WRAPPED);
+ 	}
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 	return __mlx4_qp_alloc_icm(dev, qpn);
++#else
++	return __mlx4_qp_alloc_icm(dev, qpn, gfp);
++#endif
+ }
+ 
+ void __mlx4_qp_free_icm(struct mlx4_dev *dev, int qpn)
+@@ -403,7 +435,11 @@ struct mlx4_qp *mlx4_qp_lookup(struct ml
+ 	return qp;
+ }
+ 
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ int mlx4_qp_alloc(struct mlx4_dev *dev, int qpn, struct mlx4_qp *qp)
++#else
++int mlx4_qp_alloc(struct mlx4_dev *dev, int qpn, struct mlx4_qp *qp, gfp_t gfp)
++#endif
+ {
+ 	struct mlx4_priv *priv = mlx4_priv(dev);
+ 	struct mlx4_qp_table *qp_table = &priv->qp_table;
+@@ -414,7 +450,11 @@ int mlx4_qp_alloc(struct mlx4_dev *dev,
+ 
+ 	qp->qpn = qpn;
+ 
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 	err = mlx4_qp_alloc_icm(dev, qpn);
++#else
++	err = mlx4_qp_alloc_icm(dev, qpn, gfp);
++#endif
+ 	if (err)
+ 		return err;
+ 

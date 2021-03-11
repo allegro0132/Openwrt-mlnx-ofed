@@ -1,0 +1,36 @@
+From: Alaa Hleihel <alaa@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/hw/mlx5/mlx5_ib.h
+
+Change-Id: I5a1acb08ddffa129ee84a4efe059cf9e7125d385
+---
+ drivers/infiniband/hw/mlx5/mlx5_ib.h | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+--- a/drivers/infiniband/hw/mlx5/mlx5_ib.h
++++ b/drivers/infiniband/hw/mlx5/mlx5_ib.h
+@@ -577,7 +577,9 @@ struct mlx5_ib_cq {
+ 	struct work_struct	notify_work;
+ 	u16			private_flags; /* Use mlx5_ib_cq_pr_flags */
+ 
++#ifdef HAVE_PNV_PCI_AS_NOTIFY
+ 	struct task_struct     *tsk;
++#endif
+ };
+ 
+ struct mlx5_ib_wc {
+@@ -1494,6 +1496,7 @@ void __mlx5_ib_remove(struct mlx5_ib_dev
+ void *__mlx5_ib_add(struct mlx5_ib_dev *dev,
+ 		    const struct mlx5_ib_profile *profile);
+ 
++#ifdef HAVE_NDO_SET_VF_MAC
+ int mlx5_ib_get_vf_config(struct ib_device *device, int vf,
+ 			  u8 port, struct ifla_vf_info *info);
+ int mlx5_ib_set_vf_link_state(struct ib_device *device, int vf,
+@@ -1502,6 +1505,7 @@ int mlx5_ib_get_vf_stats(struct ib_devic
+ 			 u8 port, struct ifla_vf_stats *stats);
+ int mlx5_ib_set_vf_guid(struct ib_device *device, int vf, u8 port,
+ 			u64 guid, int type);
++#endif
+ 
+ __be16 mlx5_get_roce_udp_sport_min(struct mlx5_ib_dev *dev,
+ 				   const struct ib_gid_attr *attr);

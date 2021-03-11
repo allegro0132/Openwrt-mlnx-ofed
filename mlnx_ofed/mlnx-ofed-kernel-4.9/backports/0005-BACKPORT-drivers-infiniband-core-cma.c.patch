@@ -1,0 +1,372 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/core/cma.c
+
+Change-Id: I2b7cf0dc49cfe0e3ab643e6d3c32777f8defa6dd
+---
+ drivers/infiniband/core/cma.c | 162 ++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 158 insertions(+), 4 deletions(-)
+
+--- a/drivers/infiniband/core/cma.c
++++ b/drivers/infiniband/core/cma.c
+@@ -39,6 +39,9 @@
+ #include <linux/mutex.h>
+ #include <linux/random.h>
+ #include <linux/igmp.h>
++#ifndef HAVE_PERENT_OPERATIONS_ID
++#include <linux/idr.h>
++#endif
+ #include <linux/xarray.h>
+ #include <linux/inetdevice.h>
+ #include <linux/slab.h>
+@@ -68,6 +71,9 @@
+ MODULE_AUTHOR("Sean Hefty");
+ MODULE_DESCRIPTION("Generic RDMA CM Agent");
+ MODULE_LICENSE("Dual BSD/GPL");
++#ifdef RETPOLINE_MLNX
++MODULE_INFO(retpoline, "Y");
++#endif
+ 
+ #define CMA_CM_RESPONSE_TIMEOUT 22
+ #define CMA_QUERY_CLASSPORT_INFO_TIMEOUT 1000
+@@ -189,6 +195,8 @@ static LIST_HEAD(dev_list);
+ static LIST_HEAD(listen_any_list);
+ static DEFINE_MUTEX(lock);
+ static struct workqueue_struct *cma_wq;
++
++#ifdef HAVE_PERENT_OPERATIONS_ID
+ static unsigned int cma_pernet_id;
+ 
+ struct cma_pernet {
+@@ -221,6 +229,28 @@ struct xarray *cma_pernet_xa(struct net
+ 		return NULL;
+ 	}
+ }
++#else
++static DEFINE_IDR(tcp_ps);
++static DEFINE_IDR(udp_ps);
++static DEFINE_IDR(ipoib_ps);
++static DEFINE_IDR(ib_ps);
++
++static struct idr *cma_idr(enum rdma_ucm_port_space ps)
++{
++	switch (ps) {
++	case RDMA_PS_TCP:
++		return &tcp_ps;
++	case RDMA_PS_UDP:
++		return &udp_ps;
++	case RDMA_PS_IPOIB:
++		return &ipoib_ps;
++	case RDMA_PS_IB:
++		return &ib_ps;
++	default:
++		return NULL;
++	}
++}
++#endif
+ 
+ struct cma_device {
+ 	struct list_head	list;
+@@ -249,25 +279,58 @@ struct class_port_info_context {
+ static int cma_ps_alloc(struct net *net, enum rdma_ucm_port_space ps,
+ 			struct rdma_bind_list *bind_list, int snum)
+ {
++#ifdef HAVE_PERENT_OPERATIONS_ID
+ 	struct xarray *xa = cma_pernet_xa(net, ps);
+ 
+ 	return xa_insert(xa, snum, bind_list, GFP_KERNEL);
++#else
++	struct idr *idr = cma_idr(ps);
++
++#ifdef HAVE_IDR_ALLOC
++	return idr_alloc(idr, bind_list, snum, snum + 1, GFP_KERNEL);
++#else
++	int id, ret;
++
++	do {
++		ret = idr_get_new_above(idr, bind_list, snum, &id);
++	} while ((ret == -EAGAIN) && idr_pre_get(idr, GFP_KERNEL));
++
++	if (ret)
++		return ret;
++
++	return (id != snum) ?  -EADDRNOTAVAIL : id;
++
++#endif //HAVE_IDR_ALLOC
++#endif //HAVE_HAVE_PERENT_OPERATIONS_ID
+ }
+ 
+ static struct rdma_bind_list *cma_ps_find(struct net *net,
+ 					  enum rdma_ucm_port_space ps, int snum)
+ {
++#ifdef HAVE_PERENT_OPERATIONS_ID
+ 	struct xarray *xa = cma_pernet_xa(net, ps);
+ 
+ 	return xa_load(xa, snum);
++#else
++	struct idr *idr = cma_idr(ps);
++
++ 	return idr_find(idr, snum);
++#endif
++ 
+ }
+ 
+ static void cma_ps_remove(struct net *net, enum rdma_ucm_port_space ps,
+ 			  int snum)
+ {
++#ifdef HAVE_PERENT_OPERATIONS_ID
+ 	struct xarray *xa = cma_pernet_xa(net, ps);
+ 
+ 	xa_erase(xa, snum);
++#else
++	struct idr *idr = cma_idr(ps);
++ 
++ 	idr_remove(idr, snum);
++#endif
+ }
+ 
+ enum {
+@@ -1415,9 +1478,17 @@ static bool validate_ipv4_net_dev(struct
+ {
+ 	__be32 daddr = dst_addr->sin_addr.s_addr,
+ 	       saddr = src_addr->sin_addr.s_addr;
++#ifndef HAVE_FIB_RES_PUT
+ 	struct fib_result res;
++#endif
++#ifdef HAVE_FLOWI_AF_SPECIFIC_INSTANCES
+ 	struct flowi4 fl4;
++#else
++	struct flowi fl;
++#endif
++#ifndef HAVE_FIB_RES_PUT
+ 	int err;
++#endif
+ 	bool ret;
+ 
+ 	if (ipv4_is_multicast(saddr) || ipv4_is_lbcast(saddr) ||
+@@ -1426,15 +1497,36 @@ static bool validate_ipv4_net_dev(struct
+ 	    ipv4_is_loopback(saddr))
+ 		return false;
+ 
++#ifdef HAVE_FLOWI_AF_SPECIFIC_INSTANCES
+ 	memset(&fl4, 0, sizeof(fl4));
+ 	fl4.flowi4_iif = net_dev->ifindex;
+ 	fl4.daddr = daddr;
+ 	fl4.saddr = saddr;
++#else
++	memset(&fl, 0, sizeof(fl));
++	fl.iif = net_dev->ifindex;
++	fl.nl_u.ip4_u.daddr = daddr;
++	fl.nl_u.ip4_u.saddr = saddr;
++#endif
+ 
++#ifndef HAVE_FIB_RES_PUT
+ 	rcu_read_lock();
++
++#ifdef HAVE_FLOWI_AF_SPECIFIC_INSTANCES
++#ifdef HAVE_FIB_LOOKUP_4_PARAMS
+ 	err = fib_lookup(dev_net(net_dev), &fl4, &res, 0);
++#else
++	err = fib_lookup(dev_net(net_dev), &fl4, &res);
++#endif
++#else
++	err = fib_lookup(dev_net(net_dev), &fl, &res);
++#endif
+ 	ret = err == 0 && FIB_RES_DEV(res) == net_dev;
+ 	rcu_read_unlock();
++#else
++	ret = (netif_carrier_ok(net_dev) && netif_running(net_dev)) ?
++		true : false;
++#endif
+ 
+ 	return ret;
+ }
+@@ -1448,14 +1540,26 @@ static bool validate_ipv6_net_dev(struct
+ 			   IPV6_ADDR_LINKLOCAL;
+ 	struct rt6_info *rt = rt6_lookup(dev_net(net_dev), &dst_addr->sin6_addr,
+ 					 &src_addr->sin6_addr, net_dev->ifindex,
++#ifdef HAVE_RT6_LOOKUP_TAKES_6_PARAMS
+ 					 NULL, strict);
++#else
++					 strict);
++#endif
+ 	bool ret;
+ 
+ 	if (!rt)
+ 		return false;
+ 
+ 	ret = rt->rt6i_idev->dev == net_dev;
++#ifdef HAVE_IP6_RT_PUT
+ 	ip6_rt_put(rt);
++#else
++#ifdef HAVE_RT_DIRECT_DST
++	dst_release(&rt->dst);
++#else
++	dst_release(&rt->u.dst);
++#endif
++#endif
+ 
+ 	return ret;
+ #else
+@@ -1634,11 +1738,12 @@ static struct rdma_id_private *cma_find_
+ 		const struct net_device *net_dev)
+ {
+ 	struct rdma_id_private *id_priv, *id_priv_dev;
++	COMPAT_HL_NODE
+ 
+ 	if (!bind_list)
+ 		return ERR_PTR(-EINVAL);
+ 
+-	hlist_for_each_entry(id_priv, &bind_list->owners, node) {
++	compat_hlist_for_each_entry(id_priv, &bind_list->owners, node) {
+ 		if (cma_match_private_data(id_priv, ib_event->private_data)) {
+ 			if (id_priv->id.device == cm_id->device &&
+ 			    cma_match_net_dev(&id_priv->id, net_dev, req))
+@@ -2832,19 +2937,41 @@ static int cma_resolve_iw_route(struct r
+ 	return 0;
+ }
+ 
++#if defined(HAVE_VLAN_DEV_GET_EGRESS_QOS_MASK)
+ static u8 iboe_tos_to_sl(struct net_device *ndev, u8 tos)
++#else
++static u8 iboe_tos_to_sl(struct ib_device *ibdev, u8 port_num,
++			 struct net_device *ndev, u8 tos)
++#endif
+ {
+ 	int prio;
++#if defined(HAVE_VLAN_DEV_GET_EGRESS_QOS_MASK)
+ 	struct net_device *dev;
++#endif
+ 
+ 	prio = rt_tos2priority(tos);
++#if defined(HAVE_VLAN_DEV_GET_EGRESS_QOS_MASK)
+ 	dev = is_vlan_dev(ndev) ? vlan_dev_real_dev(ndev) : ndev;
++#endif
+ 
+-	if (is_vlan_dev(ndev))
++	if (is_vlan_dev(ndev)) {
++#if defined(HAVE_VLAN_DEV_GET_EGRESS_QOS_MASK)
+ 		return (vlan_dev_get_egress_qos_mask(ndev, prio) &
+ 			VLAN_PRIO_MASK) >> VLAN_PRIO_SHIFT;
++	}
++#else
++		u8 up;
+ 
++		if (!ib_get_skprio2up(ibdev, port_num, prio, &up))
++			return up;
++	}
++#endif
++
++#if defined(HAVE_VLAN_DEV_GET_EGRESS_QOS_MASK)
+ 	return netdev_get_prio_tc_map(dev, prio);
++#else
++	return 0;
++#endif
+ }
+ 
+ static int cma_resolve_iboe_route(struct rdma_id_private *id_priv)
+@@ -2891,7 +3018,13 @@ static int cma_resolve_iboe_route(struct
+ 	route->path_rec->reversible = 1;
+ 	route->path_rec->pkey = cpu_to_be16(0xffff);
+ 	route->path_rec->mtu_selector = IB_SA_EQ;
++#if defined(HAVE_VLAN_DEV_GET_EGRESS_QOS_MASK)
+ 	route->path_rec->sl = iboe_tos_to_sl(ndev, tos);
++#else
++	route->path_rec->sl = iboe_tos_to_sl(id_priv->id.device,
++					     id_priv->id.port_num,
++					     ndev, tos);
++#endif
+ 	route->path_rec->traffic_class = tos;
+ 	route->path_rec->mtu = iboe_get_mtu(ndev->mtu);
+ 	route->path_rec->rate_selector = IB_SA_EQ;
+@@ -3319,9 +3452,11 @@ static int cma_port_is_unique(struct rdm
+ 	struct rdma_id_private *cur_id;
+ 	struct sockaddr  *daddr = cma_dst_addr(id_priv);
+ 	struct sockaddr  *saddr = cma_src_addr(id_priv);
++	COMPAT_HL_NODE
++
+ 	__be16 dport = cma_port(daddr);
+ 
+-	hlist_for_each_entry(cur_id, &bind_list->owners, node) {
++	compat_hlist_for_each_entry(cur_id, &bind_list->owners, node) {
+ 		struct sockaddr  *cur_daddr = cma_dst_addr(cur_id);
+ 		struct sockaddr  *cur_saddr = cma_src_addr(cur_id);
+ 		__be16 cur_dport = cma_port(cur_daddr);
+@@ -3360,7 +3495,11 @@ static int cma_alloc_any_port(enum rdma_
+ 	unsigned int rover;
+ 	struct net *net = id_priv->id.route.addr.dev_addr.net;
+ 
++#ifdef HAVE_INET_GET_LOCAL_PORT_RANGE_3_PARAMS
+ 	inet_get_local_port_range(net, &low, &high);
++#else
++	inet_get_local_port_range(&low, &high);
++#endif
+ 	remaining = (high - low) + 1;
+ 	rover = prandom_u32() % remaining + low;
+ retry:
+@@ -3406,9 +3545,10 @@ static int cma_check_port(struct rdma_bi
+ {
+ 	struct rdma_id_private *cur_id;
+ 	struct sockaddr *addr, *cur_addr;
++	COMPAT_HL_NODE
+ 
+ 	addr = cma_src_addr(id_priv);
+-	hlist_for_each_entry(cur_id, &bind_list->owners, node) {
++	compat_hlist_for_each_entry(cur_id, &bind_list->owners, node) {
+ 		if (id_priv == cur_id)
+ 			continue;
+ 
+@@ -4730,6 +4870,7 @@ static void cma_remove_one(struct ib_dev
+ 	kfree(cma_dev);
+ }
+ 
++#ifdef HAVE_PERENT_OPERATIONS_ID
+ static int cma_init_net(struct net *net)
+ {
+ 	struct cma_pernet *pernet = cma_pernet(net);
+@@ -4758,6 +4899,7 @@ static struct pernet_operations cma_pern
+ 	.id = &cma_pernet_id,
+ 	.size = sizeof(struct cma_pernet),
+ };
++#endif
+ 
+ static int __init cma_init(void)
+ {
+@@ -4767,9 +4909,11 @@ static int __init cma_init(void)
+ 	if (!cma_wq)
+ 		return -ENOMEM;
+ 
++#ifdef HAVE_PERENT_OPERATIONS_ID
+ 	ret = register_pernet_subsys(&cma_pernet_operations);
+ 	if (ret)
+ 		goto err_wq;
++#endif
+ 
+ 	ib_sa_register_client(&sa_client);
+ 	register_netdevice_notifier(&cma_nb);
+@@ -4785,7 +4929,9 @@ static int __init cma_init(void)
+ err:
+ 	unregister_netdevice_notifier(&cma_nb);
+ 	ib_sa_unregister_client(&sa_client);
++#ifdef HAVE_PERENT_OPERATIONS_ID
+ err_wq:
++#endif
+ 	destroy_workqueue(cma_wq);
+ 	return ret;
+ }
+@@ -4796,8 +4942,16 @@ static void __exit cma_cleanup(void)
+ 	ib_unregister_client(&cma_client);
+ 	unregister_netdevice_notifier(&cma_nb);
+ 	ib_sa_unregister_client(&sa_client);
++#ifdef HAVE_PERENT_OPERATIONS_ID
+ 	unregister_pernet_subsys(&cma_pernet_operations);
++#endif
+ 	destroy_workqueue(cma_wq);
++#ifndef HAVE_PERENT_OPERATIONS_ID
++	idr_destroy(&tcp_ps);
++	idr_destroy(&udp_ps);
++	idr_destroy(&ipoib_ps);
++	idr_destroy(&ib_ps);
++#endif
+ }
+ 
+ module_init(cma_init);

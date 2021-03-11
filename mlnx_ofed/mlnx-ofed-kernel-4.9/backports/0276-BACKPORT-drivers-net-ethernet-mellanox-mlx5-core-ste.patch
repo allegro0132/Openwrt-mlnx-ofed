@@ -1,0 +1,36 @@
+From: Yevgeny Kliteynik <kliteyn@mellanox.com>
+Subject: [PATCH] BACKPORT:
+ drivers/net/ethernet/mellanox/mlx5/core/steering/dr_icm_pool.c
+
+---
+ .../mellanox/mlx5/core/steering/dr_icm_pool.c         | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/steering/dr_icm_pool.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/steering/dr_icm_pool.c
+@@ -3,6 +3,25 @@
+ 
+ #include "dr_types.h"
+ 
++#if (defined(HAVE_KVFREE) || !defined(HAVE_KVFREE))
++/* Define local implementation of kvfree to replace compat
++ * layer implementation, so that memtrack will see the calling
++ * function directly - otherwise it is hidden by compat's
++ * "backport_kvfree" function in the stack.
++ * Unfortunately, compat's backport_kvfree is defined even in
++ * some kernels that do have kvfree.
++ */
++#ifdef kvfree
++#undef kvfree
++#endif
++#define kvfree(p)	{ if (is_vmalloc_addr(p)) vfree(p); else kfree(p); }
++
++#ifdef backport_kvfree
++#undef backport_kvfree
++#endif
++#define backport_kvfree	kvfree
++#endif /* HAVE_KVFREE */
++
+ #define DR_ICM_MODIFY_HDR_ALIGN_BASE 64
+ #define DR_ICM_SYNC_THRESHOLD (64 * 1024 * 1024)
+ 

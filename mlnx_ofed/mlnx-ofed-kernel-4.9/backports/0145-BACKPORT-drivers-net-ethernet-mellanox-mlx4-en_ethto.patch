@@ -1,0 +1,1483 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx4/en_ethtool.c
+
+Change-Id: Iaa2ca8571edf0d056a8c8e5589331ea28976f34f
+---
+ .../net/ethernet/mellanox/mlx4/en_ethtool.c   | 916 +++++++++++++++++-
+ 1 file changed, 909 insertions(+), 7 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx4/en_ethtool.c
++++ b/drivers/net/ethernet/mellanox/mlx4/en_ethtool.c
+@@ -47,6 +47,46 @@
+ #define EN_ETHTOOL_SHORT_MASK cpu_to_be16(0xffff)
+ #define EN_ETHTOOL_WORD_MASK  cpu_to_be32(0xffffffff)
+ 
++#ifndef HAVE_ETHTOOL_FLOW_UNION
++union mlx4_ethtool_flow_union {
++	struct ethtool_tcpip4_spec		tcp_ip4_spec;
++	struct ethtool_tcpip4_spec		udp_ip4_spec;
++	struct ethtool_tcpip4_spec		sctp_ip4_spec;
++	struct ethtool_ah_espip4_spec		ah_ip4_spec;
++	struct ethtool_ah_espip4_spec		esp_ip4_spec;
++	struct ethtool_usrip4_spec		usr_ip4_spec;
++	struct ethhdr				ether_spec;
++	__u8					hdata[52];
++};
++
++struct mlx4_ethtool_flow_ext {
++	__u8		padding[2];
++	unsigned char	h_dest[ETH_ALEN];
++	__be16		vlan_etype;
++	__be16		vlan_tci;
++	__be32		data[2];
++};
++
++struct mlx4_ethtool_rx_flow_spec {
++	__u32		flow_type;
++	union mlx4_ethtool_flow_union h_u;
++	struct mlx4_ethtool_flow_ext h_ext;
++	union mlx4_ethtool_flow_union m_u;
++	struct mlx4_ethtool_flow_ext m_ext;
++	__u64		ring_cookie;
++	__u32		location;
++};
++
++struct mlx4_ethtool_rxnfc {
++	__u32				cmd;
++	__u32				flow_type;
++	__u64				data;
++	struct mlx4_ethtool_rx_flow_spec	fs;
++	__u32				rule_cnt;
++	__u32				rule_locs[0];
++};
++#endif
++
+ static int mlx4_en_moderation_update(struct mlx4_en_priv *priv)
+ {
+ 	int i, t;
+@@ -100,6 +140,119 @@ mlx4_en_get_drvinfo(struct net_device *d
+ 		sizeof(drvinfo->bus_info));
+ }
+ 
++#ifdef LEGACY_ETHTOOL_OPS
++#ifdef HAVE_GET_SET_FLAGS
++int mlx4_en_set_flags(struct net_device *dev, u32 data)
++{
++	struct mlx4_en_priv *priv = netdev_priv(dev);
++
++	if (DEV_FEATURE_CHANGED(dev, data, NETIF_F_HW_VLAN_CTAG_RX)) {
++		en_info(priv, "Turn %s RX vlan strip offload\n",
++			(data & NETIF_F_HW_VLAN_CTAG_RX) ? "ON" : "OFF");
++
++		if (data & NETIF_F_HW_VLAN_CTAG_RX)
++			priv->hwtstamp_config.flags |= NETIF_F_HW_VLAN_CTAG_RX;
++		else
++			priv->hwtstamp_config.flags &= ~NETIF_F_HW_VLAN_CTAG_RX;
++
++		mlx4_en_reset_config(dev, priv->hwtstamp_config, data);
++	}
++
++	if (DEV_FEATURE_CHANGED(dev, data, NETIF_F_HW_VLAN_CTAG_TX)) {
++		en_info(priv, "Turn %s TX vlan strip offload\n",
++				(data & NETIF_F_HW_VLAN_CTAG_TX) ? "ON" : "OFF");
++
++		if (data & NETIF_F_HW_VLAN_CTAG_TX)
++			dev->features |= NETIF_F_HW_VLAN_CTAG_TX;
++		else
++			dev->features &= ~NETIF_F_HW_VLAN_CTAG_TX;
++	}
++
++	if (data & ETH_FLAG_LRO)
++		dev->features |= NETIF_F_LRO;
++	else
++		dev->features &= ~NETIF_F_LRO;
++
++	return 0;
++}
++
++u32 mlx4_en_get_flags(struct net_device *dev)
++{
++	return ethtool_op_get_flags(dev) |
++		(dev->features & NETIF_F_HW_VLAN_CTAG_RX) |
++		(dev->features & NETIF_F_HW_VLAN_CTAG_TX);
++}
++#endif
++
++#ifdef HAVE_GET_SET_TSO
++static u32 mlx4_en_get_tso(struct net_device *dev)
++{
++       return (dev->features & NETIF_F_TSO) != 0;
++}
++
++static int mlx4_en_set_tso(struct net_device *dev, u32 data)
++{
++       struct mlx4_en_priv *priv = netdev_priv(dev);
++
++       if (data) {
++               if (!priv->mdev->LSO_support)
++                       return -EPERM;
++               dev->features |= (NETIF_F_TSO | NETIF_F_TSO6);
++#ifndef MLX4_EN_VLGRP
++               dev->vlan_features |= (NETIF_F_TSO | NETIF_F_TSO6);
++#else
++               if (priv->vlgrp) {
++                       int i;
++                       struct net_device *vdev;
++                       for (i = 0; i < VLAN_N_VID; i++) {
++                               vdev = vlan_group_get_device(priv->vlgrp, i);
++                               if (vdev) {
++                                       vdev->features |= (NETIF_F_TSO | NETIF_F_TSO6);
++                                       vlan_group_set_device(priv->vlgrp, i, vdev);
++                               }
++                       }
++               }
++#endif
++       } else {
++               dev->features &= ~(NETIF_F_TSO | NETIF_F_TSO6);
++#ifndef MLX4_EN_VLGRP
++               dev->vlan_features &= ~(NETIF_F_TSO | NETIF_F_TSO6);
++#else
++               if (priv->vlgrp) {
++                       int i;
++                       struct net_device *vdev;
++                       for (i = 0; i < VLAN_N_VID; i++) {
++                               vdev = vlan_group_get_device(priv->vlgrp, i);
++                               if (vdev) {
++                                       vdev->features &= ~(NETIF_F_TSO | NETIF_F_TSO6);
++                                       vlan_group_set_device(priv->vlgrp, i, vdev);
++                               }
++                       }
++               }
++#endif
++       }
++       return 0;
++}
++#endif
++
++#ifdef HAVE_GET_SET_RX_CSUM
++static u32 mlx4_en_get_rx_csum(struct net_device *dev)
++{
++       return dev->features & NETIF_F_RXCSUM;
++}
++
++static int mlx4_en_set_rx_csum(struct net_device *dev, u32 data)
++{
++       if (!data) {
++               dev->features &= ~NETIF_F_RXCSUM;
++               return 0;
++       }
++       dev->features |= NETIF_F_RXCSUM;
++       return 0;
++}
++#endif
++#endif
++
+ static const char mlx4_en_priv_flags[][ETH_GSTRING_LEN] = {
+ 	"blueflame",
+ 	"phv-bit",
+@@ -112,6 +265,15 @@ static const char mlx4_en_priv_flags[][E
+ 	"mlx4_flow_steering_udp",
+ 	"disable_mc_loopback",
+ 	"rx-copy",
++#ifndef HAVE_NETIF_F_RXFCS
++	"rx-fcs",
++#endif
++#ifndef HAVE_NETIF_F_RXALL
++	"rx-all",
++#endif
++#ifndef HAVE_ETH_SS_RSS_HASH_FUNCS
++	"mlx4_rss_xor_hash_function",
++#endif
+ };
+ 
+ static const char main_strings[][ETH_GSTRING_LEN] = {
+@@ -124,6 +286,9 @@ static const char main_strings[][ETH_GST
+ 	"tx_heartbeat_errors", "tx_window_errors",
+ 
+ 	/* port statistics */
++#ifdef CONFIG_COMPAT_LRO_ENABLED
++	"rx_lro_aggregated", "rx_lro_flushed", "rx_lro_no_desc",
++#endif
+ 	"tso_packets",
+ 	"xmit_more",
+ 	"queue_stopped", "wake_queue", "tx_timeout", "rx_alloc_pages", "rx_inline_scatter",
+@@ -392,7 +557,11 @@ static int mlx4_en_get_sset_count(struct
+ 	case ETH_SS_STATS:
+ 		return bitmap_iterator_count(&it) +
+ 			(priv->tx_ring_num[TX] * 2) +
++#ifdef MLX4_EN_BUSY_POLL
++			(priv->rx_ring_num * (6 + NUM_XDP_STATS)) +
++#else
+ 			(priv->rx_ring_num * (3 + NUM_XDP_STATS)) +
++#endif
+ 			(vgtp_count * 2 + vgtp_on * 1);
+ 	case ETH_SS_TEST:
+ 		return MLX4_EN_NUM_SELF_TEST - !(priv->mdev->dev->caps.flags
+@@ -404,6 +573,26 @@ static int mlx4_en_get_sset_count(struct
+ 	}
+ }
+ 
++#ifdef CONFIG_COMPAT_LRO_ENABLED
++static void mlx4_en_update_lro_stats(struct mlx4_en_priv *priv)
++{
++	int i;
++
++	priv->port_stats.lro_aggregated = 0;
++	priv->port_stats.lro_flushed = 0;
++	priv->port_stats.lro_no_desc = 0;
++
++	for (i = 0; i < priv->rx_ring_num; i++) {
++		struct net_lro_stats *lro_stats =
++			&priv->rx_ring[i]->lro.lro_mgr.stats;
++
++		priv->port_stats.lro_aggregated += lro_stats->aggregated;
++		priv->port_stats.lro_flushed += lro_stats->flushed;
++		priv->port_stats.lro_no_desc += lro_stats->no_desc;
++	}
++}
++#endif
++
+ static void mlx4_en_get_ethtool_stats(struct net_device *dev,
+ 		struct ethtool_stats *stats, uint64_t *data)
+ {
+@@ -418,6 +607,10 @@ static void mlx4_en_get_ethtool_stats(st
+ 
+ 	mlx4_en_fold_software_stats(dev);
+ 
++#ifdef CONFIG_COMPAT_LRO_ENABLED
++	mlx4_en_update_lro_stats(priv);
++#endif
++
+ 	for (i = 0; i < NUM_MAIN_STATS; i++, bitmap_iterator_inc(&it))
+ 		if (bitmap_iterator_test(&it))
+ 			data[index++] = ((unsigned long *)&dev->stats)[i];
+@@ -497,6 +690,11 @@ static void mlx4_en_get_ethtool_stats(st
+ 		data[index++] = priv->rx_ring[i]->xdp_drop;
+ 		data[index++] = priv->rx_ring[i]->xdp_tx;
+ 		data[index++] = priv->rx_ring[i]->xdp_tx_full;
++#ifdef MLX4_EN_BUSY_POLL
++		data[index++] = priv->rx_ring[i]->yields;
++		data[index++] = priv->rx_ring[i]->misses;
++		data[index++] = priv->rx_ring[i]->cleaned;
++#endif
+ 	}
+ 	spin_unlock_bh(&priv->stats_lock);
+ 
+@@ -620,6 +818,14 @@ static void mlx4_en_get_strings(struct n
+ 				"rx%d_xdp_tx", i);
+ 			sprintf(data + (index++) * ETH_GSTRING_LEN,
+ 				"rx%d_xdp_tx_full", i);
++#ifdef MLX4_EN_BUSY_POLL
++			sprintf(data + (index++) * ETH_GSTRING_LEN,
++				"rx%d_napi_yield", i);
++			sprintf(data + (index++) * ETH_GSTRING_LEN,
++				"rx%d_misses", i);
++			sprintf(data + (index++) * ETH_GSTRING_LEN,
++				"rx%d_cleaned", i);
++#endif
+ 		}
+ 		break;
+ 	case ETH_SS_PRIV_FLAGS:
+@@ -644,6 +850,7 @@ static u32 mlx4_en_autoneg_get(struct ne
+ 	return autoneg;
+ }
+ 
++#ifdef HAVE_ETHTOOL_xLINKSETTINGS
+ static void ptys2ethtool_update_supported_port(unsigned long *mask,
+ 					       struct mlx4_ptys_reg *ptys_reg)
+ {
+@@ -669,6 +876,39 @@ static void ptys2ethtool_update_supporte
+ 		__set_bit(ETHTOOL_LINK_MODE_Backplane_BIT, mask);
+ 	}
+ }
++#endif
++
++#ifdef HAVE_ETHTOOL_GET_SET_SETTINGS
++static u32 ptys_get_supported_port(struct mlx4_ptys_reg *ptys_reg)
++{
++	u32 eth_proto = be32_to_cpu(ptys_reg->eth_proto_cap);
++
++	if (eth_proto & (MLX4_PROT_MASK(MLX4_10GBASE_T)
++			 | MLX4_PROT_MASK(MLX4_1000BASE_T)
++			 | MLX4_PROT_MASK(MLX4_100BASE_TX))) {
++			return SUPPORTED_TP;
++	}
++
++	if (eth_proto & (MLX4_PROT_MASK(MLX4_10GBASE_CR)
++			 | MLX4_PROT_MASK(MLX4_10GBASE_SR)
++			 | MLX4_PROT_MASK(MLX4_56GBASE_SR4)
++			 | MLX4_PROT_MASK(MLX4_40GBASE_CR4)
++			 | MLX4_PROT_MASK(MLX4_40GBASE_SR4)
++			 | MLX4_PROT_MASK(MLX4_1000BASE_CX_SGMII))) {
++			return SUPPORTED_FIBRE;
++	}
++
++	if (eth_proto & (MLX4_PROT_MASK(MLX4_56GBASE_KR4)
++			 | MLX4_PROT_MASK(MLX4_40GBASE_KR4)
++			 | MLX4_PROT_MASK(MLX4_20GBASE_KR2)
++			 | MLX4_PROT_MASK(MLX4_10GBASE_KR)
++			 | MLX4_PROT_MASK(MLX4_10GBASE_KX4)
++			 | MLX4_PROT_MASK(MLX4_1000BASE_KX))) {
++			return SUPPORTED_Backplane;
++	}
++	return 0;
++}
++#endif
+ 
+ static u32 ptys_get_active_port(struct mlx4_ptys_reg *ptys_reg)
+ {
+@@ -707,14 +947,23 @@ static u32 ptys_get_active_port(struct m
+ 	return PORT_OTHER;
+ }
+ 
++#ifndef FIELD_SIZEOF
++#define MLX4_LINK_MODES_SZ \
++	(sizeof_field(struct mlx4_ptys_reg, eth_proto_cap) * 8)
++#else
+ #define MLX4_LINK_MODES_SZ \
+ 	(FIELD_SIZEOF(struct mlx4_ptys_reg, eth_proto_cap) * 8)
++#endif
+ 
+ enum ethtool_report {
+ 	SUPPORTED = 0,
+ 	ADVERTISED = 1,
++#ifndef HAVE_ETHTOOL_xLINKSETTINGS
++	SPEED = 2,
++#endif
+ };
+ 
++#ifdef HAVE_ETHTOOL_xLINKSETTINGS
+ struct ptys2ethtool_config {
+ 	__ETHTOOL_DECLARE_LINK_MODE_MASK(supported);
+ 	__ETHTOOL_DECLARE_LINK_MODE_MASK(advertised);
+@@ -749,8 +998,10 @@ static unsigned long *ptys2ethtool_link_
+ 			__set_bit(modes[i], cfg->advertised);		\
+ 		}							\
+ 	})
++#endif
+ 
+ /* Translates mlx4 link mode to equivalent ethtool Link modes/speed */
++#ifdef HAVE_ETHTOOL_xLINKSETTINGS
+ static struct ptys2ethtool_config ptys2ethtool_map[MLX4_LINK_MODES_SZ];
+ 
+ void __init mlx4_en_init_ptys2ethtool_map(void)
+@@ -791,7 +1042,103 @@ void __init mlx4_en_init_ptys2ethtool_ma
+ 	MLX4_BUILD_PTYS2ETHTOOL_CONFIG(MLX4_56GBASE_SR4, SPEED_56000,
+ 				       ETHTOOL_LINK_MODE_56000baseSR4_Full_BIT);
+ };
++#endif
+ 
++#ifdef HAVE_ETHTOOL_GET_SET_SETTINGS
++static u32 deprecated_ptys2ethtool_map[MLX4_LINK_MODES_SZ][3] = {
++	[MLX4_100BASE_TX] = {
++		SUPPORTED_100baseT_Full,
++		ADVERTISED_100baseT_Full,
++		SPEED_100
++		},
++
++	[MLX4_1000BASE_T] = {
++		SUPPORTED_1000baseT_Full,
++		ADVERTISED_1000baseT_Full,
++		SPEED_1000
++		},
++	[MLX4_1000BASE_CX_SGMII] = {
++		SUPPORTED_1000baseKX_Full,
++		ADVERTISED_1000baseKX_Full,
++		SPEED_1000
++		},
++	[MLX4_1000BASE_KX] = {
++		SUPPORTED_1000baseKX_Full,
++		ADVERTISED_1000baseKX_Full,
++		SPEED_1000
++		},
++
++	[MLX4_10GBASE_T] = {
++		SUPPORTED_10000baseT_Full,
++		ADVERTISED_10000baseT_Full,
++		SPEED_10000
++		},
++	[MLX4_10GBASE_CX4] = {
++		SUPPORTED_10000baseKX4_Full,
++		ADVERTISED_10000baseKX4_Full,
++		SPEED_10000
++		},
++	[MLX4_10GBASE_KX4] = {
++		SUPPORTED_10000baseKX4_Full,
++		ADVERTISED_10000baseKX4_Full,
++		SPEED_10000
++		},
++	[MLX4_10GBASE_KR] = {
++		SUPPORTED_10000baseKR_Full,
++		ADVERTISED_10000baseKR_Full,
++		SPEED_10000
++		},
++	[MLX4_10GBASE_CR] = {
++		SUPPORTED_10000baseKR_Full,
++		ADVERTISED_10000baseKR_Full,
++		SPEED_10000
++		},
++	[MLX4_10GBASE_SR] = {
++		SUPPORTED_10000baseKR_Full,
++		ADVERTISED_10000baseKR_Full,
++		SPEED_10000
++		},
++
++	[MLX4_20GBASE_KR2] = {
++		SUPPORTED_20000baseMLD2_Full | SUPPORTED_20000baseKR2_Full,
++		ADVERTISED_20000baseMLD2_Full | ADVERTISED_20000baseKR2_Full,
++		SPEED_20000
++		},
++
++	[MLX4_40GBASE_CR4] = {
++		SUPPORTED_40000baseCR4_Full,
++		ADVERTISED_40000baseCR4_Full,
++		SPEED_40000
++		},
++	[MLX4_40GBASE_KR4] = {
++		SUPPORTED_40000baseKR4_Full,
++		ADVERTISED_40000baseKR4_Full,
++		SPEED_40000
++		},
++	[MLX4_40GBASE_SR4] = {
++		SUPPORTED_40000baseSR4_Full,
++		ADVERTISED_40000baseSR4_Full,
++		SPEED_40000
++		},
++
++	[MLX4_56GBASE_KR4] = {
++		SUPPORTED_56000baseKR4_Full,
++		ADVERTISED_56000baseKR4_Full,
++		SPEED_56000
++		},
++	[MLX4_56GBASE_CR4] = {
++		SUPPORTED_56000baseCR4_Full,
++		ADVERTISED_56000baseCR4_Full,
++		SPEED_56000
++		},
++	[MLX4_56GBASE_SR4] = {
++		SUPPORTED_56000baseSR4_Full,
++		ADVERTISED_56000baseSR4_Full,
++		SPEED_56000
++		},
++};
++#endif
++#ifdef HAVE_ETHTOOL_xLINKSETTINGS
+ static void ptys2ethtool_update_link_modes(unsigned long *link_modes,
+ 					   u32 eth_proto,
+ 					   enum ethtool_report report)
+@@ -805,7 +1152,22 @@ static void ptys2ethtool_update_link_mod
+ 				  __ETHTOOL_LINK_MODE_MASK_NBITS);
+ 	}
+ }
++#endif
+ 
++#ifdef HAVE_ETHTOOL_GET_SET_SETTINGS
++static u32 ptys2ethtool_link_modes(u32 eth_proto, enum ethtool_report report)
++{
++	int i;
++	u32 link_modes = 0;
++
++	for (i = 0; i < MLX4_LINK_MODES_SZ; i++) {
++		if (eth_proto & MLX4_PROT_MASK(i))
++			link_modes |= deprecated_ptys2ethtool_map[i][report];
++	}
++	return link_modes;
++}
++#endif
++#ifdef HAVE_ETHTOOL_xLINKSETTINGS
+ static u32 ethtool2ptys_link_modes(const unsigned long *link_modes,
+ 				   enum ethtool_report report)
+ {
+@@ -822,7 +1184,21 @@ static u32 ethtool2ptys_link_modes(const
+ 	}
+ 	return ptys_modes;
+ }
++#endif
+ 
++#ifdef HAVE_ETHTOOL_GET_SET_SETTINGS
++static u32 deprecated_ethtool2ptys_link_modes(u32 link_modes, enum ethtool_report report)
++{
++	int i;
++	u32 ptys_modes = 0;
++
++	for (i = 0; i < MLX4_LINK_MODES_SZ; i++) {
++		if (deprecated_ptys2ethtool_map[i][report] & link_modes)
++			ptys_modes |= 1 << i;
++	}
++	return ptys_modes;
++}
++#endif
+ /* Convert actual speed (SPEED_XXX) to ptys link modes */
+ static u32 speed2ptys_link_modes(u32 speed)
+ {
+@@ -830,12 +1206,17 @@ static u32 speed2ptys_link_modes(u32 spe
+ 	u32 ptys_modes = 0;
+ 
+ 	for (i = 0; i < MLX4_LINK_MODES_SZ; i++) {
++#ifdef HAVE_ETHTOOL_xLINKSETTINGS
+ 		if (ptys2ethtool_map[i].speed == speed)
++#else
++		if (deprecated_ptys2ethtool_map[i][SPEED] == speed)
++#endif
+ 			ptys_modes |= 1 << i;
+ 	}
+ 	return ptys_modes;
+ }
+ 
++#ifdef HAVE_ETHTOOL_xLINKSETTINGS
+ static int
+ ethtool_get_ptys_link_ksettings(struct net_device *dev,
+ 				struct ethtool_link_ksettings *link_ksettings)
+@@ -923,7 +1304,86 @@ ethtool_get_ptys_link_ksettings(struct n
+ 
+ 	return ret;
+ }
++#endif
++
++#ifdef HAVE_ETHTOOL_GET_SET_SETTINGS
++static int ethtool_get_ptys_settings(struct net_device *dev,
++				     struct ethtool_cmd *cmd)
++{
++	struct mlx4_en_priv *priv = netdev_priv(dev);
++	struct mlx4_ptys_reg ptys_reg;
++	u32 eth_proto;
++	int ret;
++
++	memset(&ptys_reg, 0, sizeof(ptys_reg));
++	ptys_reg.local_port = priv->port;
++	ptys_reg.proto_mask = MLX4_PTYS_EN;
++	ret = mlx4_ACCESS_PTYS_REG(priv->mdev->dev,
++				   MLX4_ACCESS_REG_QUERY, &ptys_reg);
++	if (ret) {
++		en_warn(priv, "Failed to run mlx4_ACCESS_PTYS_REG status(%x)",
++			ret);
++		return ret;
++	}
++	en_dbg(DRV, priv, "ptys_reg.proto_mask       %x\n",
++	       ptys_reg.proto_mask);
++	en_dbg(DRV, priv, "ptys_reg.eth_proto_cap    %x\n",
++	       be32_to_cpu(ptys_reg.eth_proto_cap));
++	en_dbg(DRV, priv, "ptys_reg.eth_proto_admin  %x\n",
++	       be32_to_cpu(ptys_reg.eth_proto_admin));
++	en_dbg(DRV, priv, "ptys_reg.eth_proto_oper   %x\n",
++	       be32_to_cpu(ptys_reg.eth_proto_oper));
++	en_dbg(DRV, priv, "ptys_reg.eth_proto_lp_adv %x\n",
++	       be32_to_cpu(ptys_reg.eth_proto_lp_adv));
++
++	cmd->supported = 0;
++	cmd->advertising = 0;
++
++	cmd->supported |= ptys_get_supported_port(&ptys_reg);
++
++	eth_proto = be32_to_cpu(ptys_reg.eth_proto_cap);
++	cmd->supported |= ptys2ethtool_link_modes(eth_proto, SUPPORTED);
++
++	eth_proto = be32_to_cpu(ptys_reg.eth_proto_admin);
++	cmd->advertising |= ptys2ethtool_link_modes(eth_proto, ADVERTISED);
++
++	cmd->supported |= SUPPORTED_Pause | SUPPORTED_Asym_Pause;
++	cmd->advertising |= (priv->prof->tx_pause) ? ADVERTISED_Pause : 0;
++
++	cmd->advertising |= (priv->prof->tx_pause ^ priv->prof->rx_pause) ?
++		ADVERTISED_Asym_Pause : 0;
++
++	cmd->port = ptys_get_active_port(&ptys_reg);
++	cmd->transceiver = (SUPPORTED_TP & cmd->supported) ?
++		XCVR_EXTERNAL : XCVR_INTERNAL;
++
++	if (mlx4_en_autoneg_get(dev)) {
++		cmd->supported |= SUPPORTED_Autoneg;
++		cmd->advertising |= ADVERTISED_Autoneg;
++	}
++
++	cmd->autoneg = (priv->port_state.flags & MLX4_EN_PORT_ANC) ?
++		AUTONEG_ENABLE : AUTONEG_DISABLE;
++
++	eth_proto = be32_to_cpu(ptys_reg.eth_proto_lp_adv);
++	cmd->lp_advertising = ptys2ethtool_link_modes(eth_proto, ADVERTISED);
++
++	cmd->lp_advertising |= (priv->port_state.flags & MLX4_EN_PORT_ANC) ?
++			ADVERTISED_Autoneg : 0;
+ 
++	cmd->phy_address = 0;
++	cmd->mdio_support = 0;
++	cmd->maxtxpkt = 0;
++	cmd->maxrxpkt = 0;
++	cmd->eth_tp_mdix = ETH_TP_MDI_INVALID;
++#if defined(ETH_TP_MDI_AUTO)
++	cmd->eth_tp_mdix_ctrl = ETH_TP_MDI_AUTO;
++#endif
++
++	return ret;
++}
++#endif
++#ifdef HAVE_ETHTOOL_xLINKSETTINGS
+ static void
+ ethtool_get_default_link_ksettings(
+ 	struct net_device *dev, struct ethtool_link_ksettings *link_ksettings)
+@@ -958,7 +1418,37 @@ ethtool_get_default_link_ksettings(
+ 		link_ksettings->base.port = -1;
+ 	}
+ }
++#endif
+ 
++#ifdef HAVE_ETHTOOL_GET_SET_SETTINGS
++static void ethtool_get_default_settings(struct net_device *dev,
++					 struct ethtool_cmd *cmd)
++{
++	struct mlx4_en_priv *priv = netdev_priv(dev);
++	int trans_type;
++
++	cmd->autoneg = AUTONEG_DISABLE;
++	cmd->supported = SUPPORTED_10000baseT_Full;
++	cmd->advertising = ADVERTISED_10000baseT_Full;
++	trans_type = priv->port_state.transceiver;
++
++	if (trans_type > 0 && trans_type <= 0xC) {
++		cmd->port = PORT_FIBRE;
++		cmd->transceiver = XCVR_EXTERNAL;
++		cmd->supported |= SUPPORTED_FIBRE;
++		cmd->advertising |= ADVERTISED_FIBRE;
++	} else if (trans_type == 0x80 || trans_type == 0) {
++		cmd->port = PORT_TP;
++		cmd->transceiver = XCVR_INTERNAL;
++		cmd->supported |= SUPPORTED_TP;
++		cmd->advertising |= ADVERTISED_TP;
++	} else  {
++		cmd->port = -1;
++		cmd->transceiver = -1;
++	}
++}
++#endif
++#ifdef HAVE_ETHTOOL_xLINKSETTINGS
+ static int
+ mlx4_en_get_link_ksettings(struct net_device *dev,
+ 			   struct ethtool_link_ksettings *link_ksettings)
+@@ -987,7 +1477,36 @@ mlx4_en_get_link_ksettings(struct net_de
+ 	}
+ 	return 0;
+ }
++#endif
+ 
++#ifdef HAVE_ETHTOOL_GET_SET_SETTINGS
++static int mlx4_en_get_settings(struct net_device *dev, struct ethtool_cmd *cmd)
++{
++	struct mlx4_en_priv *priv = netdev_priv(dev);
++	int ret = -EINVAL;
++
++	if (mlx4_en_QUERY_PORT(priv->mdev, priv->port))
++		return -ENOMEM;
++
++	en_dbg(DRV, priv, "query port state.flags ANC(%x) ANE(%x)\n",
++	       priv->port_state.flags & MLX4_EN_PORT_ANC,
++	       priv->port_state.flags & MLX4_EN_PORT_ANE);
++
++	if (priv->mdev->dev->caps.flags2 & MLX4_DEV_CAP_FLAG2_ETH_PROT_CTRL)
++		ret = ethtool_get_ptys_settings(dev, cmd);
++	if (ret) /* ETH PROT CRTL is not supported or PTYS CMD failed */
++		ethtool_get_default_settings(dev, cmd);
++
++	if (netif_carrier_ok(dev)) {
++		ethtool_cmd_speed_set(cmd, priv->port_state.link_speed);
++		cmd->duplex = DUPLEX_FULL;
++	} else {
++		ethtool_cmd_speed_set(cmd, SPEED_UNKNOWN);
++		cmd->duplex = DUPLEX_UNKNOWN;
++	}
++	return 0;
++}
++#endif
+ /* Calculate PTYS admin according ethtool speed (SPEED_XXX) */
+ static __be32 speed_set_ptys_admin(struct mlx4_en_priv *priv, u32 speed,
+ 				   __be32 proto_cap)
+@@ -1007,6 +1526,7 @@ static __be32 speed_set_ptys_admin(struc
+ 	return proto_admin;
+ }
+ 
++#ifdef HAVE_ETHTOOL_xLINKSETTINGS
+ static int
+ mlx4_en_set_link_ksettings(struct net_device *dev,
+ 			   const struct ethtool_link_ksettings *link_ksettings)
+@@ -1093,7 +1613,74 @@ mlx4_en_set_link_ksettings(struct net_de
+ 	mutex_unlock(&priv->mdev->state_lock);
+ 	return 0;
+ }
++#endif
++
++#ifdef HAVE_ETHTOOL_GET_SET_SETTINGS
++static int mlx4_en_set_settings(struct net_device *dev, struct ethtool_cmd *cmd)
++{
++	struct mlx4_en_priv *priv = netdev_priv(dev);
++	struct mlx4_ptys_reg ptys_reg;
++	__be32 proto_admin;
++	int ret;
++
++	u32 ptys_adv = deprecated_ethtool2ptys_link_modes(cmd->advertising, ADVERTISED);
++	int speed = ethtool_cmd_speed(cmd);
++
++       en_dbg(DRV, priv, "Set Speed=%d adv=0x%x autoneg=%d duplex=%d\n",
++              speed, cmd->advertising, cmd->autoneg, cmd->duplex);
++
++       if (!(priv->mdev->dev->caps.flags2 & MLX4_DEV_CAP_FLAG2_ETH_PROT_CTRL) ||
++           (cmd->duplex == DUPLEX_HALF))
++               return -EINVAL;
++
++	memset(&ptys_reg, 0, sizeof(ptys_reg));
++	ptys_reg.local_port = priv->port;
++	ptys_reg.proto_mask = MLX4_PTYS_EN;
++	ret = mlx4_ACCESS_PTYS_REG(priv->mdev->dev,
++				   MLX4_ACCESS_REG_QUERY, &ptys_reg);
++	if (ret) {
++		en_warn(priv, "Failed to QUERY mlx4_ACCESS_PTYS_REG status(%x)\n",
++			ret);
++		return 0;
++	}
++
++	proto_admin = cmd->autoneg == AUTONEG_ENABLE ?
++		cpu_to_be32(ptys_adv) :
++		speed_set_ptys_admin(priv, speed,
++				     ptys_reg.eth_proto_cap);
++
++	proto_admin &= ptys_reg.eth_proto_cap;
++	if (!proto_admin) {
++		en_warn(priv, "Not supported link mode(s) requested, check supported link modes.\n");
++		return -EINVAL; /* nothing to change due to bad input */
++	}
++
++	if (proto_admin == ptys_reg.eth_proto_admin)
++		return 0; /* Nothing to change */
++
++	en_dbg(DRV, priv, "mlx4_ACCESS_PTYS_REG SET: ptys_reg.eth_proto_admin = 0x%x\n",
++	       be32_to_cpu(proto_admin));
+ 
++	ptys_reg.eth_proto_admin = proto_admin;
++	ret = mlx4_ACCESS_PTYS_REG(priv->mdev->dev, MLX4_ACCESS_REG_WRITE,
++				   &ptys_reg);
++	if (ret) {
++		en_warn(priv, "Failed to write mlx4_ACCESS_PTYS_REG eth_proto_admin(0x%x) status(0x%x)",
++			be32_to_cpu(ptys_reg.eth_proto_admin), ret);
++		return ret;
++	}
++
++	mutex_lock(&priv->mdev->state_lock);
++	if (priv->port_up) {
++		en_warn(priv, "Port link mode changed, restarting port...\n");
++		mlx4_en_stop_port(dev, 1);
++		if (mlx4_en_start_port(dev))
++			en_err(priv, "Failed restarting port %d\n", priv->port);
++	}
++	mutex_unlock(&priv->mdev->state_lock);
++	return 0;
++}
++#endif
+ static int mlx4_en_get_coalesce(struct net_device *dev,
+ 			      struct ethtool_coalesce *coal)
+ {
+@@ -1232,12 +1819,25 @@ static int mlx4_en_set_ringparam(struct
+ 			MLX4_EN_MIN_RX_SIZE);
+ 		return -EINVAL;
+ 	}
++	if (param->rx_pending > MLX4_EN_MAX_RX_SIZE) {
++		en_warn(priv, "%s: rx_pending (%d) > max (%d)\n",
++			__func__, param->rx_pending,
++			MLX4_EN_MAX_RX_SIZE);
++		return -EINVAL;
++	}
++
+ 	if (param->tx_pending < MLX4_EN_MIN_TX_SIZE) {
+ 		en_warn(priv, "%s: tx_pending (%d) < min (%lu)\n",
+ 			__func__, param->tx_pending,
+ 			MLX4_EN_MIN_TX_SIZE);
+ 		return -EINVAL;
+ 	}
++	if (param->tx_pending > MLX4_EN_MAX_TX_SIZE) {
++		en_warn(priv, "%s: tx_pending (%d) > max (%d)\n",
++			__func__, param->tx_pending,
++			MLX4_EN_MAX_TX_SIZE);
++		return -EINVAL;
++	}
+ 
+ 	rx_size = roundup_pow_of_two(param->rx_pending);
+ 	tx_size = roundup_pow_of_two(param->tx_pending);
+@@ -1255,7 +1855,11 @@ static int mlx4_en_set_ringparam(struct
+ 	memcpy(&new_prof, priv->prof, sizeof(struct mlx4_en_port_profile));
+ 	new_prof.tx_ring_size = tx_size;
+ 	new_prof.rx_ring_size = rx_size;
++#ifdef HAVE_XDP_BUFF
+ 	err = mlx4_en_try_alloc_resources(priv, tmp, &new_prof, true);
++#else
++	err = mlx4_en_try_alloc_resources(priv, tmp, &new_prof);
++#endif
+ 	if (err)
+ 		goto out;
+ 
+@@ -1292,18 +1896,27 @@ static void mlx4_en_get_ringparam(struct
+ 	param->tx_pending = priv->tx_ring[TX][0]->size;
+ }
+ 
++#if defined(HAVE_RXFH_INDIR_SIZE) || defined(HAVE_RXFH_INDIR_SIZE_EXT)
++#if defined(HAVE_RXFH_INDIR_SIZE) && !defined(HAVE_RXFH_INDIR_SIZE_EXT)
++u32 mlx4_en_get_rxfh_indir_size(struct net_device *dev)
++#elif defined(HAVE_RXFH_INDIR_SIZE_EXT) && !defined(HAVE_RXFH_INDIR_SIZE)
+ static u32 mlx4_en_get_rxfh_indir_size(struct net_device *dev)
++#endif
+ {
+ 	struct mlx4_en_priv *priv = netdev_priv(dev);
+ 
+ 	return rounddown_pow_of_two(priv->rx_ring_num);
+ }
++#endif
+ 
++#if defined(HAVE_GET_SET_RXFH) && !defined(HAVE_GET_SET_RXFH_INDIR_EXT)
+ static u32 mlx4_en_get_rxfh_key_size(struct net_device *netdev)
+ {
+ 	return MLX4_EN_RSS_KEY_SIZE;
+ }
++#endif
+ 
++#if defined(HAVE_GET_SET_RXFH) && !defined(HAVE_GET_SET_RXFH_INDIR_EXT) && defined(HAVE_ETH_SS_RSS_HASH_FUNCS)
+ static int mlx4_en_check_rxfh_func(struct net_device *dev, u8 hfunc)
+ {
+ 	struct mlx4_en_priv *priv = netdev_priv(dev);
+@@ -1325,9 +1938,19 @@ static int mlx4_en_check_rxfh_func(struc
+ 
+ 	return -EINVAL;
+ }
+-
++#endif
++#if defined(HAVE_GET_SET_RXFH) && !defined(HAVE_GET_SET_RXFH_INDIR_EXT)
++#ifdef HAVE_ETH_SS_RSS_HASH_FUNCS
+ static int mlx4_en_get_rxfh(struct net_device *dev, u32 *ring_index, u8 *key,
+ 			    u8 *hfunc)
++#else
++static int mlx4_en_get_rxfh(struct net_device *dev, u32 *ring_index, u8 *key)
++#endif
++#elif defined(HAVE_GET_SET_RXFH_INDIR) || defined (HAVE_GET_SET_RXFH_INDIR_EXT)
++static int mlx4_en_get_rxfh_indir(struct net_device *dev, u32 *ring_index)
++#elif defined(CONFIG_SYSFS_INDIR_SETTING)
++int mlx4_en_get_rxfh_indir(struct net_device *dev, u32 *ring_index)
++#endif
+ {
+ 	struct mlx4_en_priv *priv = netdev_priv(dev);
+ 	u32 n = mlx4_en_get_rxfh_indir_size(dev);
+@@ -1342,15 +1965,30 @@ static int mlx4_en_get_rxfh(struct net_d
+ 			break;
+ 		ring_index[i] = i % rss_rings;
+ 	}
++#if defined(HAVE_GET_SET_RXFH) && !defined(HAVE_GET_SET_RXFH_INDIR_EXT)
+ 	if (key)
+ 		memcpy(key, priv->rss_key, MLX4_EN_RSS_KEY_SIZE);
++#ifdef HAVE_ETH_SS_RSS_HASH_FUNCS
+ 	if (hfunc)
+ 		*hfunc = priv->rss_hash_fn;
++#endif
++#endif
+ 	return err;
+ }
+ 
++#if defined(HAVE_GET_SET_RXFH) && !defined(HAVE_GET_SET_RXFH_INDIR_EXT)
+ static int mlx4_en_set_rxfh(struct net_device *dev, const u32 *ring_index,
++#ifdef HAVE_ETH_SS_RSS_HASH_FUNCS
+ 			    const u8 *key, const u8 hfunc)
++#else
++			    const u8 *key)
++#endif
++#elif defined(HAVE_GET_SET_RXFH_INDIR) || defined (HAVE_GET_SET_RXFH_INDIR_EXT)
++static int mlx4_en_set_rxfh_indir(struct net_device *dev, const u32 *ring_index)
++#elif defined(CONFIG_SYSFS_INDIR_SETTING)
++int mlx4_en_set_rxfh_indir(struct net_device *dev, const u32 *ring_index)
++#endif
++
+ {
+ 	struct mlx4_en_priv *priv = netdev_priv(dev);
+ 	u32 n = mlx4_en_get_rxfh_indir_size(dev);
+@@ -1380,11 +2018,13 @@ static int mlx4_en_set_rxfh(struct net_d
+ 	if (!is_power_of_2(rss_rings))
+ 		return -EINVAL;
+ 
++#if defined(HAVE_GET_SET_RXFH) && !defined(HAVE_GET_SET_RXFH_INDIR_EXT) && defined(HAVE_ETH_SS_RSS_HASH_FUNCS)
+ 	if (hfunc != ETH_RSS_HASH_NO_CHANGE) {
+ 		err = mlx4_en_check_rxfh_func(dev, hfunc);
+ 		if (err)
+ 			return err;
+ 	}
++#endif
+ 
+ 	mutex_lock(&mdev->state_lock);
+ 	if (priv->port_up) {
+@@ -1394,10 +2034,14 @@ static int mlx4_en_set_rxfh(struct net_d
+ 
+ 	if (ring_index)
+ 		priv->prof->rss_rings = rss_rings;
++#if defined(HAVE_GET_SET_RXFH) && !defined(HAVE_GET_SET_RXFH_INDIR_EXT)
+ 	if (key)
+ 		memcpy(priv->rss_key, key, MLX4_EN_RSS_KEY_SIZE);
++#ifdef HAVE_ETH_SS_RSS_HASH_FUNCS
+ 	if (hfunc !=  ETH_RSS_HASH_NO_CHANGE)
+ 		priv->rss_hash_fn = hfunc;
++#endif
++#endif
+ 
+ 	if (port_up) {
+ 		err = mlx4_en_start_port(dev);
+@@ -1413,7 +2057,11 @@ static int mlx4_en_set_rxfh(struct net_d
+ 	((field) == 0 || (field) == (__force typeof(field))-1)
+ 
+ static int mlx4_en_validate_flow(struct net_device *dev,
++#ifdef HAVE_ETHTOOL_FLOW_UNION
+ 				 struct ethtool_rxnfc *cmd)
++#else
++				 struct mlx4_ethtool_rxnfc *cmd)
++#endif
+ {
+ 	struct ethtool_usrip4_spec *l3_mask;
+ 	struct ethtool_tcpip4_spec *l4_mask;
+@@ -1422,11 +2070,13 @@ static int mlx4_en_validate_flow(struct
+ 	if (cmd->fs.location >= MAX_NUM_OF_FS_RULES)
+ 		return -EINVAL;
+ 
++#ifdef HAVE_ETHTOOL_FLOW_EXT_H_DEST
+ 	if (cmd->fs.flow_type & FLOW_MAC_EXT) {
+ 		/* dest mac mask must be ff:ff:ff:ff:ff:ff */
+ 		if (!is_broadcast_ether_addr(cmd->fs.m_ext.h_dest))
+ 			return -EINVAL;
+ 	}
++#endif
+ 
+ 	switch (cmd->fs.flow_type & ~(FLOW_EXT | FLOW_MAC_EXT)) {
+ 	case TCP_V4_FLOW:
+@@ -1467,6 +2117,7 @@ static int mlx4_en_validate_flow(struct
+ 		return -EINVAL;
+ 	}
+ 
++#ifdef HAVE_ETHTOOL_FLOW_EXT
+ 	if ((cmd->fs.flow_type & FLOW_EXT)) {
+ 		if (cmd->fs.m_ext.vlan_etype ||
+ 		    !((cmd->fs.m_ext.vlan_tci & cpu_to_be16(VLAN_VID_MASK)) ==
+@@ -1481,11 +2132,16 @@ static int mlx4_en_validate_flow(struct
+ 
+ 		}
+ 	}
++#endif
+ 
+ 	return 0;
+ }
+ 
++#ifdef HAVE_ETHTOOL_FLOW_UNION
+ static int mlx4_en_ethtool_add_mac_rule(struct ethtool_rxnfc *cmd,
++#else
++static int mlx4_en_ethtool_add_mac_rule(struct mlx4_ethtool_rxnfc *cmd,
++#endif
+ 					struct list_head *rule_list_h,
+ 					struct mlx4_spec_list *spec_l2,
+ 					unsigned char *mac)
+@@ -1497,11 +2153,13 @@ static int mlx4_en_ethtool_add_mac_rule(
+ 	memcpy(spec_l2->eth.dst_mac_msk, &mac_msk, ETH_ALEN);
+ 	memcpy(spec_l2->eth.dst_mac, mac, ETH_ALEN);
+ 
++#ifdef HAVE_ETHTOOL_FLOW_EXT
+ 	if ((cmd->fs.flow_type & FLOW_EXT) &&
+ 	    (cmd->fs.m_ext.vlan_tci & cpu_to_be16(VLAN_VID_MASK))) {
+ 		spec_l2->eth.vlan_id = cmd->fs.h_ext.vlan_tci;
+ 		spec_l2->eth.vlan_id_msk = cpu_to_be16(VLAN_VID_MASK);
+ 	}
++#endif
+ 
+ 	list_add_tail(&spec_l2->list, rule_list_h);
+ 
+@@ -1509,7 +2167,11 @@ static int mlx4_en_ethtool_add_mac_rule(
+ }
+ 
+ static int mlx4_en_ethtool_add_mac_rule_by_ipv4(struct mlx4_en_priv *priv,
++#ifdef HAVE_ETHTOOL_FLOW_UNION
+ 						struct ethtool_rxnfc *cmd,
++#else
++						struct mlx4_ethtool_rxnfc *cmd,
++#endif
+ 						struct list_head *rule_list_h,
+ 						struct mlx4_spec_list *spec_l2,
+ 						__be32 ipv4_dst)
+@@ -1518,9 +2180,11 @@ static int mlx4_en_ethtool_add_mac_rule_
+ 	unsigned char mac[ETH_ALEN];
+ 
+ 	if (!ipv4_is_multicast(ipv4_dst)) {
++#ifdef HAVE_ETHTOOL_FLOW_EXT_H_DEST
+ 		if (cmd->fs.flow_type & FLOW_MAC_EXT)
+ 			memcpy(&mac, cmd->fs.h_ext.h_dest, ETH_ALEN);
+ 		else
++#endif
+ 			memcpy(&mac, priv->dev->dev_addr, ETH_ALEN);
+ 	} else {
+ 		ip_eth_mc_map(ipv4_dst, mac);
+@@ -1533,7 +2197,11 @@ static int mlx4_en_ethtool_add_mac_rule_
+ }
+ 
+ static int add_ip_rule(struct mlx4_en_priv *priv,
++#ifdef HAVE_ETHTOOL_FLOW_UNION
+ 		       struct ethtool_rxnfc *cmd,
++#else
++		       struct mlx4_ethtool_rxnfc *cmd,
++#endif
+ 		       struct list_head *list_h)
+ {
+ 	int err;
+@@ -1571,7 +2239,11 @@ free_spec:
+ }
+ 
+ static int add_tcp_udp_rule(struct mlx4_en_priv *priv,
++#ifdef HAVE_ETHTOOL_FLOW_UNION
+ 			     struct ethtool_rxnfc *cmd,
++#else
++			     struct mlx4_ethtool_rxnfc *cmd,
++#endif
+ 			     struct list_head *list_h, int proto)
+ {
+ 	int err;
+@@ -1639,7 +2311,11 @@ free_spec:
+ }
+ 
+ static int mlx4_en_ethtool_to_net_trans_rule(struct net_device *dev,
++#ifdef HAVE_ETHTOOL_FLOW_UNION
+ 					     struct ethtool_rxnfc *cmd,
++#else
++					     struct mlx4_ethtool_rxnfc *cmd,
++#endif
+ 					     struct list_head *rule_list_h)
+ {
+ 	int err;
+@@ -1679,7 +2355,11 @@ static int mlx4_en_ethtool_to_net_trans_
+ }
+ 
+ static int mlx4_en_flow_replace(struct net_device *dev,
++#ifdef HAVE_ETHTOOL_FLOW_UNION
+ 				struct ethtool_rxnfc *cmd)
++#else
++				struct mlx4_ethtool_rxnfc *cmd)
++#endif
+ {
+ 	int err;
+ 	struct mlx4_en_priv *priv = netdev_priv(dev);
+@@ -1755,7 +2435,11 @@ out_free_list:
+ }
+ 
+ static int mlx4_en_flow_detach(struct net_device *dev,
++#ifdef HAVE_ETHTOOL_FLOW_UNION
+ 			       struct ethtool_rxnfc *cmd)
++#else
++			       struct mlx4_ethtool_rxnfc *cmd)
++#endif
+ {
+ 	int err = 0;
+ 	struct ethtool_flow_id *rule;
+@@ -1784,7 +2468,12 @@ out:
+ 
+ }
+ 
++#ifdef HAVE_ETHTOOL_FLOW_UNION
+ static int mlx4_en_get_flow(struct net_device *dev, struct ethtool_rxnfc *cmd,
++#else
++static int mlx4_en_get_flow(struct net_device *dev,
++			    struct mlx4_ethtool_rxnfc *cmd,
++#endif
+ 			    int loc)
+ {
+ 	int err = 0;
+@@ -1816,13 +2505,24 @@ static int mlx4_en_get_num_flows(struct
+ 
+ }
+ 
++#ifdef HAVE_ETHTOOL_FLOW_UNION
+ static int mlx4_en_get_rxnfc(struct net_device *dev, struct ethtool_rxnfc *cmd,
++#else
++static int mlx4_en_get_rxnfc(struct net_device *dev, struct ethtool_rxnfc *c,
++#endif
++#ifdef HAVE_ETHTOOL_OPS_GET_RXNFC_U32_RULE_LOCS
+ 			     u32 *rule_locs)
++#else
++			     void *rule_locs)
++#endif
+ {
+ 	struct mlx4_en_priv *priv = netdev_priv(dev);
+ 	struct mlx4_en_dev *mdev = priv->mdev;
+ 	int err = 0;
+ 	int i = 0, priority = 0;
++#ifndef HAVE_ETHTOOL_FLOW_UNION
++	struct mlx4_ethtool_rxnfc *cmd = (struct mlx4_ethtool_rxnfc *)c;
++#endif
+ 
+ 	if ((cmd->cmd == ETHTOOL_GRXCLSRLCNT ||
+ 	     cmd->cmd == ETHTOOL_GRXCLSRULE ||
+@@ -1845,7 +2545,11 @@ static int mlx4_en_get_rxnfc(struct net_
+ 		while ((!err || err == -ENOENT) && priority < cmd->rule_cnt) {
+ 			err = mlx4_en_get_flow(dev, cmd, i);
+ 			if (!err)
++#ifdef HAVE_ETHTOOL_OPS_GET_RXNFC_U32_RULE_LOCS
+ 				rule_locs[priority++] = i;
++#else
++				((u32 *)(rule_locs))[priority++] = i;
++#endif
+ 			i++;
+ 		}
+ 		err = 0;
+@@ -1858,11 +2562,18 @@ static int mlx4_en_get_rxnfc(struct net_
+ 	return err;
+ }
+ 
++#ifdef HAVE_ETHTOOL_FLOW_UNION
+ static int mlx4_en_set_rxnfc(struct net_device *dev, struct ethtool_rxnfc *cmd)
++#else
++static int mlx4_en_set_rxnfc(struct net_device *dev, struct ethtool_rxnfc *c)
++#endif
+ {
+ 	int err = 0;
+ 	struct mlx4_en_priv *priv = netdev_priv(dev);
+ 	struct mlx4_en_dev *mdev = priv->mdev;
++#ifndef HAVE_ETHTOOL_FLOW_UNION
++	struct mlx4_ethtool_rxnfc *cmd = (struct mlx4_ethtool_rxnfc *)c;
++#endif
+ 
+ 	if (mdev->dev->caps.steering_mode !=
+ 	    MLX4_STEERING_MODE_DEVICE_MANAGED || !priv->port_up)
+@@ -1887,8 +2598,11 @@ static int mlx4_en_get_max_num_rx_rings(
+ {
+ 	return min_t(int, num_online_cpus(), MAX_RX_RINGS);
+ }
+-
++#ifndef CONFIG_SYSFS_NUM_CHANNELS
+ static void mlx4_en_get_channels(struct net_device *dev,
++#else
++void mlx4_en_get_channels(struct net_device *dev,
++#endif
+ 				 struct ethtool_channels *channel)
+ {
+ 	struct mlx4_en_priv *priv = netdev_priv(dev);
+@@ -1903,7 +2617,11 @@ static void mlx4_en_get_channels(struct
+ 			    priv->prof->num_up;
+ }
+ 
++#ifndef CONFIG_SYSFS_NUM_CHANNELS
+ static int mlx4_en_set_channels(struct net_device *dev,
++#else
++int mlx4_en_set_channels(struct net_device *dev,
++#endif
+ 				struct ethtool_channels *channel)
+ {
+ 	struct mlx4_en_priv *priv = netdev_priv(dev);
+@@ -1946,7 +2664,11 @@ static int mlx4_en_set_channels(struct n
+ 	new_prof.tx_ring_num[TX_XDP] = xdp_count;
+ 	new_prof.rx_ring_num = channel->rx_count;
+ 
++#ifdef HAVE_XDP_BUFF
+ 	err = mlx4_en_try_alloc_resources(priv, tmp, &new_prof, true);
++#else
++	err = mlx4_en_try_alloc_resources(priv, tmp, &new_prof);
++#endif
+ 	if (err)
+ 		goto out;
+ 
+@@ -1979,6 +2701,7 @@ out:
+ 	return err;
+ }
+ 
++#if defined(HAVE_GET_TS_INFO) || defined(HAVE_GET_TS_INFO_EXT)
+ static int mlx4_en_get_ts_info(struct net_device *dev,
+ 			       struct ethtool_ts_info *info)
+ {
+@@ -2004,12 +2727,15 @@ static int mlx4_en_get_ts_info(struct ne
+ 			(1 << HWTSTAMP_FILTER_NONE) |
+ 			(1 << HWTSTAMP_FILTER_ALL);
+ 
++#if defined (HAVE_PTP_CLOCK_INFO) && (defined(CONFIG_PTP_1588_CLOCK) || defined(CONFIG_PTP_1588_CLOCK_MODULE))
+ 		if (mdev->ptp_clock)
+ 			info->phc_index = ptp_clock_index(mdev->ptp_clock);
++#endif
+ 	}
+ 
+ 	return ret;
+ }
++#endif
+ 
+ static int mlx4_en_set_inline_scatter_thold(struct net_device *dev, int thold)
+ {
+@@ -2052,7 +2778,11 @@ static int mlx4_en_set_inline_scatter_th
+ 	mutex_lock(&mdev->state_lock);
+ 	memcpy(&new_prof, priv->prof, sizeof(struct mlx4_en_port_profile));
+ 	new_prof.inline_scatter_thold = thold;
++#ifdef HAVE_XDP_BUFF
+ 	err = mlx4_en_try_alloc_resources(priv, tmp, &new_prof, true);
++#else
++	err = mlx4_en_try_alloc_resources(priv, tmp, &new_prof);
++#endif
+ 	if (err) {
+ 		en_err(priv, "Failed allocating port resources\n");
+ 		goto out;
+@@ -2088,12 +2818,18 @@ static int mlx4_en_set_priv_flags(struct
+ 	bool phv_enabled_old = !!(priv->pflags & MLX4_EN_PRIV_FLAGS_PHV);
+ 	bool is_enabled_new = !!(flags & MLX4_EN_PRIV_FLAGS_INLINE_SCATTER);
+ 	bool is_enabled_old = !!(priv->pflags & MLX4_EN_PRIV_FLAGS_INLINE_SCATTER);
++#ifndef CONFIG_COMPAT_DISABLE_DCB
+ #ifdef CONFIG_MLX4_EN_DCB
+ 	bool qcn_disable_new = !!(flags & MLX4_EN_PRIV_FLAGS_DISABLE_32_14_4_E);
+ 	bool qcn_disable_old = !!(priv->pflags & MLX4_EN_PRIV_FLAGS_DISABLE_32_14_4_E);
+ #endif
++#endif
+ 	bool ld_new = !!(flags & MLX4_EN_PRIV_FLAGS_DISABLE_MC_LOOPBACK);
+ 	bool ld_old = !!(priv->pflags & MLX4_EN_PRIV_FLAGS_DISABLE_MC_LOOPBACK);
++#ifndef HAVE_ETH_SS_RSS_HASH_FUNCS
++	bool rss_func_new = !!(flags & MLX4_EN_PRIV_FLAGS_RSS_HASH_XOR);
++	bool rss_func_old = !!(priv->pflags & MLX4_EN_PRIV_FLAGS_RSS_HASH_XOR);
++#endif
+ 	int i;
+ 	int ret = 0;
+ 
+@@ -2105,6 +2841,39 @@ static int mlx4_en_set_priv_flags(struct
+ 		return -EINVAL;
+ 
+ 
++#ifndef HAVE_ETH_SS_RSS_HASH_FUNCS
++	if (rss_func_new != rss_func_old) {
++		int err = 0;
++		bool port_up = false;
++		if (rss_func_new) {
++			priv->pflags |= MLX4_EN_PRIV_FLAGS_RSS_HASH_XOR;
++#ifdef HAVE_NETIF_F_RXHASH
++			dev->features &= ~NETIF_F_RXHASH;
++#endif
++		} else {
++			priv->pflags &= ~MLX4_EN_PRIV_FLAGS_RSS_HASH_XOR;
++#ifdef HAVE_NETIF_F_RXHASH
++			dev->features |= NETIF_F_RXHASH;
++#endif
++		}
++
++		mutex_lock(&mdev->state_lock);
++		if (priv->port_up) {
++			port_up = true;
++			en_warn(priv,
++			"Port line mode changed, restarting port...\n");
++			mlx4_en_stop_port(dev, 1);
++		}
++		if (port_up) {
++			err = mlx4_en_start_port(dev);
++			if (err)
++				en_err(priv, "Failed restarting port %d\n",
++				       priv->port);
++		}
++		mutex_unlock(&mdev->state_lock);
++	}
++#endif
++#ifndef CONFIG_COMPAT_DISABLE_DCB
+ #ifdef CONFIG_MLX4_EN_DCB
+ 	if (qcn_disable_new != qcn_disable_old) {
+ 		ret = mlx4_disable_32_14_4_e_write(mdev->dev, qcn_disable_new,
+@@ -2123,6 +2892,67 @@ static int mlx4_en_set_priv_flags(struct
+ 			qcn_disable_new ? "ON" : "OFF");
+ 	}
+ #endif
++#endif
++
++#ifndef HAVE_NETIF_F_RXFCS
++	if ((flags ^ priv->pflags) & MLX4_EN_PRIV_FLAGS_RXFCS) {
++		int err = 0;
++		bool port_up = false;
++		u8 rxfcs_value = (flags & MLX4_EN_PRIV_FLAGS_RXFCS) ? 1 : 0;
++
++		if (!(mdev->dev->caps.flags2 & MLX4_DEV_CAP_FLAG2_IGNORE_FCS)
++		    || mlx4_is_mfunc(mdev->dev))
++			return -EOPNOTSUPP;
++
++		en_info(priv, "Turn %s RX-FCS\n", rxfcs_value ? "ON" : "OFF");
++
++		if (rxfcs_value)
++			priv->pflags |= MLX4_EN_PRIV_FLAGS_RXFCS;
++		else
++			priv->pflags &= ~MLX4_EN_PRIV_FLAGS_RXFCS;
++
++		mutex_lock(&mdev->state_lock);
++		if (priv->port_up) {
++			port_up = true;
++			en_warn(priv,
++			"Port link mode changed, restarting port...\n");
++			mlx4_en_stop_port(dev, 1);
++		}
++		if (port_up) {
++			err = mlx4_en_start_port(dev);
++			if (err)
++				en_err(priv, "Failed restarting port %d\n",
++				       priv->port);
++		}
++		mutex_unlock(&mdev->state_lock);
++
++		if (err)
++			return err;
++	}
++#endif
++
++#ifndef HAVE_NETIF_F_RXALL
++	if ((flags ^ priv->pflags) & MLX4_EN_PRIV_FLAGS_RXALL) {
++		int ret = 0;
++		u8 rxall_value = (flags & MLX4_EN_PRIV_FLAGS_RXALL) ? 1 : 0;
++
++		if (!(mdev->dev->caps.flags2 & MLX4_DEV_CAP_FLAG2_IGNORE_FCS)
++		    || mlx4_is_mfunc(mdev->dev))
++			return -EOPNOTSUPP;
++
++		en_info(priv, "Turn %s RX-ALL\n", rxall_value ? "ON" : "OFF");
++
++		if (rxall_value)
++			priv->pflags |= MLX4_EN_PRIV_FLAGS_RXALL;
++		else
++			priv->pflags &= ~MLX4_EN_PRIV_FLAGS_RXALL;
++
++		ret = mlx4_SET_PORT_fcs_check(mdev->dev,
++					      priv->port, rxall_value);
++		if (ret)
++			return ret;
++	}
++#endif
+ 
+ 	if (ld_new != ld_old) {
+ 		if (!(mdev->dev->caps.flags2 &
+@@ -2214,6 +3044,7 @@ static u32 mlx4_en_get_priv_flags(struct
+ 	return priv->pflags;
+ }
+ 
++#ifdef HAVE_GET_SET_TUNABLE
+ static int mlx4_en_get_tunable(struct net_device *dev,
+ 			       const struct ethtool_tunable *tuna,
+ 			       void *data)
+@@ -2262,9 +3093,10 @@ static int mlx4_en_set_tunable(struct ne
+ 
+ 	return ret;
+ }
+-
++#endif
+ #define MLX4_EEPROM_PAGE_LEN 256
+ 
++#if defined(HAVE_GET_MODULE_EEPROM) || defined(HAVE_GET_MODULE_EEPROM_EXT)
+ static int mlx4_en_get_module_info(struct net_device *dev,
+ 				   struct ethtool_modinfo *modinfo)
+ {
+@@ -2345,7 +3177,9 @@ static int mlx4_en_get_module_eeprom(str
+ 	}
+ 	return 0;
+ }
++#endif
+ 
++#if defined(HAVE_SET_PHYS_ID) || defined(HAVE_SET_PHYS_ID_EXT)
+ static int mlx4_en_set_phys_id(struct net_device *dev,
+ 			       enum ethtool_phys_id_state state)
+ {
+@@ -2371,17 +3205,48 @@ static int mlx4_en_set_phys_id(struct ne
+ 	err = mlx4_SET_PORT_BEACON(mdev->dev, priv->port, beacon_duration);
+ 	return err;
+ }
++#endif
+ 
+ const struct ethtool_ops mlx4_en_ethtool_ops = {
+ 	.get_drvinfo = mlx4_en_get_drvinfo,
++#ifdef HAVE_ETHTOOL_xLINKSETTINGS
+ 	.get_link_ksettings = mlx4_en_get_link_ksettings,
+ 	.set_link_ksettings = mlx4_en_set_link_ksettings,
++#endif
++#ifdef HAVE_ETHTOOL_GET_SET_SETTINGS
++	.get_settings = mlx4_en_get_settings,
++	.set_settings = mlx4_en_set_settings,
++#endif
++#ifdef LEGACY_ETHTOOL_OPS
++#ifdef HAVE_GET_SET_FLAGS
++	.get_flags = mlx4_en_get_flags,
++	.set_flags = mlx4_en_set_flags,
++#endif
++#ifdef HAVE_GET_SET_TSO
++	.get_tso = mlx4_en_get_tso,
++	.set_tso = mlx4_en_set_tso,
++#endif
++#ifdef HAVE_GET_SET_SG
++	.get_sg = ethtool_op_get_sg,
++	.set_sg = ethtool_op_set_sg,
++#endif
++#ifdef HAVE_GET_SET_RX_CSUM
++	.get_rx_csum = mlx4_en_get_rx_csum,
++	.set_rx_csum = mlx4_en_set_rx_csum,
++#endif
++#ifdef HAVE_GET_SET_TX_CSUM
++	.get_tx_csum = ethtool_op_get_tx_csum,
++	.set_tx_csum = ethtool_op_set_tx_ipv6_csum,
++#endif
++#endif
+ 	.get_link = ethtool_op_get_link,
+ 	.get_strings = mlx4_en_get_strings,
+ 	.get_sset_count = mlx4_en_get_sset_count,
+ 	.get_ethtool_stats = mlx4_en_get_ethtool_stats,
+ 	.self_test = mlx4_en_self_test,
++#if defined(HAVE_SET_PHYS_ID) && !defined(HAVE_SET_PHYS_ID_EXT)
+ 	.set_phys_id = mlx4_en_set_phys_id,
++#endif
+ 	.get_wol = mlx4_en_get_wol,
+ 	.set_wol = mlx4_en_set_wol,
+ 	.get_msglevel = mlx4_en_get_msglevel,
+@@ -2394,22 +3259,59 @@ const struct ethtool_ops mlx4_en_ethtool
+ 	.set_ringparam = mlx4_en_set_ringparam,
+ 	.get_rxnfc = mlx4_en_get_rxnfc,
+ 	.set_rxnfc = mlx4_en_set_rxnfc,
++#if defined(HAVE_RXFH_INDIR_SIZE) && !defined(HAVE_RXFH_INDIR_SIZE_EXT)
+ 	.get_rxfh_indir_size = mlx4_en_get_rxfh_indir_size,
++#endif
++#if defined(HAVE_GET_SET_RXFH) && !defined(HAVE_GET_SET_RXFH_INDIR_EXT)
+ 	.get_rxfh_key_size = mlx4_en_get_rxfh_key_size,
+ 	.get_rxfh = mlx4_en_get_rxfh,
+ 	.set_rxfh = mlx4_en_set_rxfh,
++#elif defined(HAVE_GET_SET_RXFH_INDIR) && !defined(HAVE_GET_SET_RXFH_INDIR_EXT)
++	.get_rxfh_indir = mlx4_en_get_rxfh_indir,
++	.set_rxfh_indir = mlx4_en_set_rxfh_indir,
++#endif
++#ifdef HAVE_GET_SET_CHANNELS
+ 	.get_channels = mlx4_en_get_channels,
+ 	.set_channels = mlx4_en_set_channels,
++#endif
++#if defined(HAVE_GET_TS_INFO) && !defined(HAVE_GET_TS_INFO_EXT)
+ 	.get_ts_info = mlx4_en_get_ts_info,
++#endif
+ 	.set_priv_flags = mlx4_en_set_priv_flags,
+ 	.get_priv_flags = mlx4_en_get_priv_flags,
++#ifdef HAVE_GET_SET_TUNABLE
+ 	.get_tunable		= mlx4_en_get_tunable,
+ 	.set_tunable		= mlx4_en_set_tunable,
++#endif
++#ifdef HAVE_GET_MODULE_EEPROM
+ 	.get_module_info = mlx4_en_get_module_info,
+ 	.get_module_eeprom = mlx4_en_get_module_eeprom
++#endif
+ };
+ 
+-
+-
+-
+-
++#ifdef HAVE_ETHTOOL_OPS_EXT
++const struct ethtool_ops_ext mlx4_en_ethtool_ops_ext = {
++	.size = sizeof(struct ethtool_ops_ext),
++#ifdef HAVE_RXFH_INDIR_SIZE_EXT
++	.get_rxfh_indir_size = mlx4_en_get_rxfh_indir_size,
++#endif
++#ifdef HAVE_GET_SET_RXFH_INDIR_EXT
++	.get_rxfh_indir = mlx4_en_get_rxfh_indir,
++	.set_rxfh_indir = mlx4_en_set_rxfh_indir,
++#endif
++#ifdef HAVE_GET_SET_CHANNELS_EXT
++	.get_channels = mlx4_en_get_channels,
++	.set_channels = mlx4_en_set_channels,
++#endif
++#ifdef HAVE_GET_TS_INFO_EXT
++	.get_ts_info = mlx4_en_get_ts_info,
++#endif
++#ifdef HAVE_SET_PHYS_ID_EXT
++	.set_phys_id = mlx4_en_set_phys_id,
++#endif
++#ifdef HAVE_GET_MODULE_EEPROM_EXT
++	.get_module_info = mlx4_en_get_module_info,
++	.get_module_eeprom = mlx4_en_get_module_eeprom,
++#endif
++};
++#endif

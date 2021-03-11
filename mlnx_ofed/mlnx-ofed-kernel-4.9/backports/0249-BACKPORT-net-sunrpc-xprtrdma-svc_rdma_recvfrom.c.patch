@@ -1,0 +1,98 @@
+From: Vasily Philipov <vasilyf@mellanox.com>
+Subject: [PATCH] BACKPORT: net/sunrpc/xprtrdma/svc_rdma_recvfrom.c
+
+Change-Id: I78a800eca7f0574a5504cd61a139401bbc21edab
+Signed-off-by: Vasily Philipov <vasilyf@mellanox.com>
+---
+ net/sunrpc/xprtrdma/svc_rdma_recvfrom.c | 23 +++++++++++++++++++++++
+ 1 file changed, 23 insertions(+)
+
+--- a/net/sunrpc/xprtrdma/svc_rdma_recvfrom.c
++++ b/net/sunrpc/xprtrdma/svc_rdma_recvfrom.c
+@@ -104,7 +104,10 @@
+ #include <linux/sunrpc/svc_rdma.h>
+ 
+ #include "xprt_rdma.h"
++
++#ifdef HAVE_TRACE_RPCRDMA_H
+ #include <trace/events/rpcrdma.h>
++#endif
+ 
+ #define RPCDBG_FACILITY	RPCDBG_SVCXPRT
+ 
+@@ -233,7 +236,9 @@ static int __svc_rdma_post_recv(struct s
+ 
+ 	svc_xprt_get(&rdma->sc_xprt);
+ 	ret = ib_post_recv(rdma->sc_qp, &ctxt->rc_recv_wr, NULL);
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_svcrdma_post_recv(&ctxt->rc_recv_wr, ret);
++#endif
+ 	if (ret)
+ 		goto err_post;
+ 	return 0;
+@@ -292,7 +297,9 @@ static void svc_rdma_wc_receive(struct i
+ 	struct ib_cqe *cqe = wc->wr_cqe;
+ 	struct svc_rdma_recv_ctxt *ctxt;
+ 
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_svcrdma_wc_receive(wc);
++#endif
+ 
+ 	/* WARNING: Only wc->wr_cqe and wc->status are reliable */
+ 	ctxt = container_of(cqe, struct svc_rdma_recv_ctxt, rc_cqe);
+@@ -597,27 +604,39 @@ static int svc_rdma_xdr_decode_req(struc
+ 	hdr_len = (unsigned long)p - (unsigned long)rdma_argp;
+ 	rq_arg->head[0].iov_len -= hdr_len;
+ 	rq_arg->len -= hdr_len;
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_svcrdma_decode_rqst(rdma_argp, hdr_len);
++#endif
+ 	return hdr_len;
+ 
+ out_short:
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_svcrdma_decode_short(rq_arg->len);
++#endif
+ 	return -EINVAL;
+ 
+ out_version:
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_svcrdma_decode_badvers(rdma_argp);
++#endif
+ 	return -EPROTONOSUPPORT;
+ 
+ out_drop:
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_svcrdma_decode_drop(rdma_argp);
++#endif
+ 	return 0;
+ 
+ out_proc:
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_svcrdma_decode_badproc(rdma_argp);
++#endif
+ 	return -EINVAL;
+ 
+ out_inval:
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_svcrdma_decode_parse(rdma_argp);
++#endif
+ 	return -EINVAL;
+ }
+ 
+@@ -672,11 +691,15 @@ static void svc_rdma_send_error(struct s
+ 		*p++ = err_vers;
+ 		*p++ = rpcrdma_version;
+ 		*p++ = rpcrdma_version;
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 		trace_svcrdma_err_vers(*rdma_argp);
++#endif
+ 		break;
+ 	default:
+ 		*p++ = err_chunk;
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 		trace_svcrdma_err_chunk(*rdma_argp);
++#endif
+ 	}
+ 	length = (unsigned long)p - (unsigned long)ctxt->sc_xprt_buf;
+ 	svc_rdma_sync_reply_hdr(xprt, ctxt, length);

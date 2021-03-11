@@ -1,0 +1,7 @@
+[Unit]
+Description=mlnx_interface_mgr - configure %I
+
+[Service]
+Type=simple
+ExecStart=/bin/mlnx_interface_mgr.sh %I
+ExecStop=/bin/true

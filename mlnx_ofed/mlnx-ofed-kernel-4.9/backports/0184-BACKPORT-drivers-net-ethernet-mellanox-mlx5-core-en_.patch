@@ -1,0 +1,102 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx5/core/en_arfs.c
+
+Change-Id: Ib3e9587149008b9caf76850785a0838afce37b7c
+---
+ drivers/net/ethernet/mellanox/mlx5/core/en_arfs.c | 23 +++++++++++++++++++----
+ 1 file changed, 19 insertions(+), 4 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en_arfs.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en_arfs.c
+@@ -70,7 +70,7 @@ struct arfs_rule {
+ 
+ #define mlx5e_for_each_hash_arfs_rule(hn, tmp, hash, j) \
+ 	for (j = 0; j < ARFS_HASH_SIZE; j++) \
+-		hlist_for_each_entry_safe(hn, tmp, &hash[j], hlist)
++		compat_hlist_for_each_entry_safe(hn, tmp, &hash[j], hlist)
+ 
+ static enum mlx5e_traffic_types arfs_get_tt(enum arfs_type type)
+ {
+@@ -177,7 +177,11 @@ void mlx5e_arfs_destroy_tables(struct ml
+ {
+ 	int i;
+ 
++#ifdef HAVE_NETDEV_HW_FEATURES
+ 	if (!(priv->netdev->hw_features & NETIF_F_NTUPLE))
++#else
++	if (true)
++#endif
+ 		return;
+ 
+ 	arfs_del_rules(priv);
+@@ -366,7 +370,11 @@ int mlx5e_arfs_create_tables(struct mlx5
+ 	int err = 0;
+ 	int i;
+ 
++#ifdef HAVE_NETDEV_HW_FEATURES
+ 	if (!(priv->netdev->hw_features & NETIF_F_NTUPLE))
++#else
++	if (true)
++#endif
+ 		return 0;
+ 
+ 	spin_lock_init(&priv->fs.arfs.arfs_lock);
+@@ -397,6 +405,8 @@ static void arfs_may_expire_flow(struct
+ 	int j;
+ 
+ 	HLIST_HEAD(del_list);
++	COMPAT_HL_NODE
++
+ 	spin_lock_bh(&priv->fs.arfs.arfs_lock);
+ 	mlx5e_for_each_arfs_rule(arfs_rule, htmp, priv->fs.arfs.arfs_tables, i, j) {
+ 		if (!work_pending(&arfs_rule->arfs_work) &&
+@@ -410,7 +420,7 @@ static void arfs_may_expire_flow(struct
+ 		}
+ 	}
+ 	spin_unlock_bh(&priv->fs.arfs.arfs_lock);
+-	hlist_for_each_entry_safe(arfs_rule, htmp, &del_list, hlist) {
++	compat_hlist_for_each_entry_safe(arfs_rule, htmp, &del_list, hlist) {
+ 		if (arfs_rule->rule)
+ 			mlx5_del_flow_rules(arfs_rule->rule);
+ 		hlist_del(&arfs_rule->hlist);
+@@ -426,6 +436,8 @@ static void arfs_del_rules(struct mlx5e_
+ 	int j;
+ 
+ 	HLIST_HEAD(del_list);
++	COMPAT_HL_NODE
++
+ 	spin_lock_bh(&priv->fs.arfs.arfs_lock);
+ 	mlx5e_for_each_arfs_rule(rule, htmp, priv->fs.arfs.arfs_tables, i, j) {
+ 		hlist_del_init(&rule->hlist);
+@@ -433,7 +445,7 @@ static void arfs_del_rules(struct mlx5e_
+ 	}
+ 	spin_unlock_bh(&priv->fs.arfs.arfs_lock);
+ 
+-	hlist_for_each_entry_safe(rule, htmp, &del_list, hlist) {
++	compat_hlist_for_each_entry_safe(rule, htmp, &del_list, hlist) {
+ 		cancel_work_sync(&rule->arfs_work);
+ 		if (rule->rule)
+ 			mlx5_del_flow_rules(rule->rule);
+@@ -707,9 +719,10 @@ static struct arfs_rule *arfs_find_rule(
+ 	struct hlist_head *head;
+ 	__be16 src_port = arfs_get_src_port(skb);
+ 	__be16 dst_port = arfs_get_dst_port(skb);
++	COMPAT_HL_NODE
+ 
+ 	head = arfs_hash_bucket(arfs_t, src_port, dst_port);
+-	hlist_for_each_entry(arfs_rule, head, hlist) {
++	compat_hlist_for_each_entry(arfs_rule, head, hlist) {
+ 		if (arfs_rule->tuple.src_port == src_port &&
+ 		    arfs_rule->tuple.dst_port == dst_port &&
+ 		    arfs_cmp_ips(&arfs_rule->tuple, skb)) {
+@@ -732,8 +745,10 @@ int mlx5e_rx_flow_steer(struct net_devic
+ 	    skb->protocol != htons(ETH_P_IPV6))
+ 		return -EPROTONOSUPPORT;
+ 
++#ifdef HAVE_SK_BUFF_ENCAPSULATION
+ 	if (skb->encapsulation)
+ 		return -EPROTONOSUPPORT;
++#endif
+ 
+ 	arfs_t = arfs_get_table(arfs, arfs_get_ip_proto(skb), skb->protocol);
+ 	if (!arfs_t)

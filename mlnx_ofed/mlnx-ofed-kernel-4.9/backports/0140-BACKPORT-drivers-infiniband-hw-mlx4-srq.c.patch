@@ -1,0 +1,45 @@
+From: Alaa Hleihel <alaa@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/hw/mlx4/srq.c
+
+Change-Id: I36fd6f518274c8f6ab05bf81e359e6fed3cad873
+---
+ drivers/infiniband/hw/mlx4/srq.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+--- a/drivers/infiniband/hw/mlx4/srq.c
++++ b/drivers/infiniband/hw/mlx4/srq.c
+@@ -127,14 +127,22 @@ int mlx4_ib_create_srq(struct ib_srq *ib
+ 		if (err)
+ 			goto err_mtt;
+ 	} else {
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 		err = mlx4_db_alloc(dev->dev, &srq->db, 0);
++#else
++		err = mlx4_db_alloc(dev->dev, &srq->db, 0, GFP_KERNEL);
++#endif
+ 		if (err)
+ 			return err;
+ 
+ 		*srq->db.db = 0;
+ 
+ 		if (mlx4_buf_alloc(dev->dev, buf_size, PAGE_SIZE * 2,
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 				   &srq->buf)) {
++#else
++				   &srq->buf, GFP_KERNEL)) {
++#endif
+ 			err = -ENOMEM;
+ 			goto err_db;
+ 		}
+@@ -159,7 +167,11 @@ int mlx4_ib_create_srq(struct ib_srq *ib
+ 		if (err)
+ 			goto err_buf;
+ 
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 		err = mlx4_buf_write_mtt(dev->dev, &srq->mtt, &srq->buf);
++#else
++		err = mlx4_buf_write_mtt(dev->dev, &srq->mtt, &srq->buf, GFP_KERNEL);
++#endif
+ 		if (err)
+ 			goto err_mtt;
+ 

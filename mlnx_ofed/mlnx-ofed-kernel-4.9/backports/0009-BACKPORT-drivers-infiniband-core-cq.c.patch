@@ -1,0 +1,91 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/core/cq.c
+
+Change-Id: I4fe66fd435a979d9d44624621a5c94dc790be53d
+---
+ drivers/infiniband/core/cq.c | 44 ++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 44 insertions(+)
+
+--- a/drivers/infiniband/core/cq.c
++++ b/drivers/infiniband/core/cq.c
+@@ -75,6 +75,8 @@ static void ib_cq_completion_direct(stru
+ 	WARN_ONCE(1, "got unsolicited completion for CQ 0x%p\n", cq);
+ }
+ 
++#if defined(HAVE_IRQ_POLL_H)
++#if IS_ENABLED(CONFIG_IRQ_POLL)
+ static int ib_poll_handler(struct irq_poll *iop, int budget)
+ {
+ 	struct ib_cq *cq = container_of(iop, struct ib_cq, iop);
+@@ -94,6 +96,31 @@ static void ib_cq_completion_softirq(str
+ {
+ 	irq_poll_sched(&cq->iop);
+ }
++#endif
++#else
++static int ib_poll_handler(struct blk_iopoll *iop, int budget)
++{
++	struct ib_cq *cq = container_of(iop, struct ib_cq, iop);
++	int completed;
++
++	completed = __ib_process_cq(cq, budget, cq->wc, IB_POLL_BATCH);
++	if (completed < budget) {
++		blk_iopoll_complete(&cq->iop);
++		if (ib_req_notify_cq(cq, IB_POLL_FLAGS) > 0) {
++			if (!blk_iopoll_sched_prep(&cq->iop))
++				blk_iopoll_sched(&cq->iop);
++		}
++	}
++
++	return completed;
++}
++
++static void ib_cq_completion_softirq(struct ib_cq *cq, void *private)
++{
++	if (!blk_iopoll_sched_prep(&cq->iop))
++		blk_iopoll_sched(&cq->iop);
++}
++#endif
+ 
+ static void ib_cq_poll_work(struct work_struct *work)
+ {
+@@ -166,12 +193,21 @@ struct ib_cq *__ib_alloc_cq_user(struct
+ 	case IB_POLL_DIRECT:
+ 		cq->comp_handler = ib_cq_completion_direct;
+ 		break;
++#if IS_ENABLED(CONFIG_IRQ_POLL) || !defined(HAVE_IRQ_POLL_H)
+ 	case IB_POLL_SOFTIRQ:
+ 		cq->comp_handler = ib_cq_completion_softirq;
+ 
++#if defined(HAVE_IRQ_POLL_H)
++#if IS_ENABLED(CONFIG_IRQ_POLL)
+ 		irq_poll_init(&cq->iop, IB_POLL_BUDGET_IRQ, ib_poll_handler);
++#endif
++#else
++		blk_iopoll_init(&cq->iop, IB_POLL_BUDGET_IRQ, ib_poll_handler);
++		blk_iopoll_enable(&cq->iop);
++#endif
+ 		ib_req_notify_cq(cq, IB_CQ_NEXT_COMP);
+ 		break;
++#endif
+ 	case IB_POLL_WORKQUEUE:
+ 	case IB_POLL_UNBOUND_WORKQUEUE:
+ 		cq->comp_handler = ib_cq_completion_workqueue;
+@@ -211,9 +247,17 @@ void ib_free_cq_user(struct ib_cq *cq, s
+ 	switch (cq->poll_ctx) {
+ 	case IB_POLL_DIRECT:
+ 		break;
++#if IS_ENABLED(CONFIG_IRQ_POLL) || !defined(HAVE_IRQ_POLL_H)
+ 	case IB_POLL_SOFTIRQ:
++#if defined(HAVE_IRQ_POLL_H)
++#if IS_ENABLED(CONFIG_IRQ_POLL)
+ 		irq_poll_disable(&cq->iop);
++#endif
++#else
++		blk_iopoll_disable(&cq->iop);
++#endif
+ 		break;
++#endif
+ 	case IB_POLL_WORKQUEUE:
+ 	case IB_POLL_UNBOUND_WORKQUEUE:
+ 		cancel_work_sync(&cq->work);

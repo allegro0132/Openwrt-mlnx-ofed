@@ -1,0 +1,47 @@
+From: Mikhael Goikhman <migo@mellanox.com>
+Subject: [PATCH] BACKPORT:
+ drivers/net/ethernet/mellanox/mlx5/core/lib/pci_vsc.c
+
+Change-Id: I5bd52a021e2ce2fc53252fba5e2ff94883b62e0a
+---
+ .../net/ethernet/mellanox/mlx5/core/lib/pci_vsc.c    | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/lib/pci_vsc.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/lib/pci_vsc.c
+@@ -68,7 +68,11 @@ int mlx5_vsc_gw_lock(struct mlx5_core_de
+ 	u32 lock_val;
+ 	int ret;
+ 
++#ifdef HAVE_PCI_CFG_ACCESS_LOCK
+ 	pci_cfg_access_lock(dev->pdev);
++#else
++	pci_block_user_cfg_access(dev->pdev);
++#endif
+ 	do {
+ 		if (retries > VSC_MAX_RETRIES) {
+ 			ret = -EBUSY;
+@@ -107,7 +111,11 @@ int mlx5_vsc_gw_lock(struct mlx5_core_de
+ 	return 0;
+ 
+ pci_unlock:
++#ifdef HAVE_PCI_CFG_ACCESS_LOCK
+ 	pci_cfg_access_unlock(dev->pdev);
++#else
++	pci_unblock_user_cfg_access(dev->pdev);
++#endif
+ 	return ret;
+ }
+ 
+@@ -116,7 +124,11 @@ int mlx5_vsc_gw_unlock(struct mlx5_core_
+ 	int ret;
+ 
+ 	ret = vsc_write(dev, VSC_SEMAPHORE_OFFSET, MLX5_VSC_UNLOCK);
++#ifdef HAVE_PCI_CFG_ACCESS_LOCK
+ 	pci_cfg_access_unlock(dev->pdev);
++#else
++	pci_unblock_user_cfg_access(dev->pdev);
++#endif
+ 	return ret;
+ }
+ 

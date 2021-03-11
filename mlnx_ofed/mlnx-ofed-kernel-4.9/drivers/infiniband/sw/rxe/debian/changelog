@@ -1,0 +1,5 @@
+mlnx-rdma-rxe (0.0-0) unstable; urgency=low
+
+  * Initial release.
+
+ -- Alaa Hleihel <alaa@mellanox.com>  Sun, 20 Nov 2016 17:30:53 +0200

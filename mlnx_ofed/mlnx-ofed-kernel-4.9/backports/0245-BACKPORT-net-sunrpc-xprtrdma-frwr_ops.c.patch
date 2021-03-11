@@ -1,0 +1,134 @@
+From: Vasily Philipov <vasilyf@mellanox.com>
+Subject: [PATCH] BACKPORT: net/sunrpc/xprtrdma/frwr_ops.c
+
+Change-Id: Ifbfb1fdeae76eeedcccb8bbb591e0ca5f6958dc5
+Signed-off-by: Vasily Philipov <vasilyf@mellanox.com>
+---
+ net/sunrpc/xprtrdma/frwr_ops.c | 27 +++++++++++++++++++++++++++
+ 1 file changed, 27 insertions(+)
+
+--- a/net/sunrpc/xprtrdma/frwr_ops.c
++++ b/net/sunrpc/xprtrdma/frwr_ops.c
+@@ -74,7 +74,10 @@
+ #include <linux/sunrpc/svc_rdma.h>
+ 
+ #include "xprt_rdma.h"
++
++#ifdef HAVE_TRACE_RPCRDMA_H
+ #include <trace/events/rpcrdma.h>
++#endif
+ 
+ #if IS_ENABLED(CONFIG_SUNRPC_DEBUG)
+ # define RPCDBG_FACILITY	RPCDBG_TRANS
+@@ -112,8 +115,10 @@ void frwr_release_mr(struct rpcrdma_mr *
+ 	int rc;
+ 
+ 	rc = ib_dereg_mr(mr->frwr.fr_mr);
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	if (rc)
+ 		trace_xprtrdma_frwr_dereg(mr, rc);
++#endif
+ 	kfree(mr->mr_sg);
+ 	kfree(mr);
+ }
+@@ -127,10 +132,14 @@ frwr_mr_recycle_worker(struct work_struc
+ 	struct rpcrdma_mr *mr = container_of(work, struct rpcrdma_mr, mr_recycle);
+ 	struct rpcrdma_xprt *r_xprt = mr->mr_xprt;
+ 
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_xprtrdma_mr_recycle(mr);
++#endif
+ 
+ 	if (mr->mr_dir != DMA_NONE) {
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 		trace_xprtrdma_mr_unmap(mr);
++#endif
+ 		ib_dma_unmap_sg(r_xprt->rx_ia.ri_id->device,
+ 				mr->mr_sg, mr->mr_nents, mr->mr_dir);
+ 		mr->mr_dir = DMA_NONE;
+@@ -180,7 +189,9 @@ int frwr_init_mr(struct rpcrdma_ia *ia,
+ 
+ out_mr_err:
+ 	rc = PTR_ERR(frmr);
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_xprtrdma_frwr_alloc(mr, rc);
++#endif
+ 	return rc;
+ 
+ out_list_err:
+@@ -313,7 +324,9 @@ frwr_wc_fastreg(struct ib_cq *cq, struct
+ 	/* WARNING: Only wr_cqe and status are reliable at this point */
+ 	if (wc->status != IB_WC_SUCCESS)
+ 		frwr->fr_state = FRWR_FLUSHED_FR;
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_xprtrdma_wc_fastreg(wc, frwr);
++#endif
+ }
+ 
+ /**
+@@ -332,7 +345,9 @@ frwr_wc_localinv(struct ib_cq *cq, struc
+ 	/* WARNING: Only wr_cqe and status are reliable at this point */
+ 	if (wc->status != IB_WC_SUCCESS)
+ 		frwr->fr_state = FRWR_FLUSHED_LI;
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_xprtrdma_wc_li(wc, frwr);
++#endif
+ }
+ 
+ /**
+@@ -352,7 +367,9 @@ frwr_wc_localinv_wake(struct ib_cq *cq,
+ 	/* WARNING: Only wr_cqe and status are reliable at this point */
+ 	if (wc->status != IB_WC_SUCCESS)
+ 		frwr->fr_state = FRWR_FLUSHED_LI;
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_xprtrdma_wc_li_wake(wc, frwr);
++#endif
+ 	complete(&frwr->fr_linv_done);
+ }
+ 
+@@ -443,19 +460,25 @@ struct rpcrdma_mr_seg *frwr_map(struct r
+ 	mr->mr_handle = ibmr->rkey;
+ 	mr->mr_length = ibmr->length;
+ 	mr->mr_offset = ibmr->iova;
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_xprtrdma_mr_map(mr);
++#endif
+ 
+ 	*out = mr;
+ 	return seg;
+ 
+ out_dmamap_err:
+ 	mr->mr_dir = DMA_NONE;
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_xprtrdma_frwr_sgerr(mr, i);
++#endif
+ 	rpcrdma_mr_put(mr);
+ 	return ERR_PTR(-EIO);
+ 
+ out_mapmr_err:
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_xprtrdma_frwr_maperr(mr, n);
++#endif
+ 	rpcrdma_mr_recycle(mr);
+ 	return ERR_PTR(-EIO);
+ }
+@@ -511,7 +534,9 @@ void frwr_reminv(struct rpcrdma_rep *rep
+ 	list_for_each_entry(mr, mrs, mr_list)
+ 		if (mr->mr_handle == rep->rr_inv_rkey) {
+ 			list_del_init(&mr->mr_list);
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 			trace_xprtrdma_mr_remoteinv(mr);
++#endif
+ 			mr->frwr.fr_state = FRWR_IS_INVALID;
+ 			rpcrdma_mr_unmap_and_put(mr);
+ 			break;	/* only one invalidated MR per RPC */
+@@ -550,7 +575,9 @@ void frwr_unmap_sync(struct rpcrdma_xprt
+ 		mr->frwr.fr_state = FRWR_IS_INVALID;
+ 
+ 		frwr = &mr->frwr;
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 		trace_xprtrdma_mr_localinv(mr);
++#endif
+ 
+ 		frwr->fr_cqe.done = frwr_wc_localinv;
+ 		last = &frwr->fr_invwr;

@@ -1,0 +1,19 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: include/linux/mdev.h
+
+Change-Id: I852a6a5c851f362ef3b00e8e8ac07de6580dede0
+---
+ include/linux/mdev.h | 2 ++
+ 1 file changed, 2 insertions(+)
+
+--- a/include/linux/mdev.h
++++ b/include/linux/mdev.h
+@@ -10,6 +10,8 @@
+ #ifndef MDEV_H
+ #define MDEV_H
+ 
++#include <linux/uuid.h>
++
+ struct mdev_device;
+ 
+ /*

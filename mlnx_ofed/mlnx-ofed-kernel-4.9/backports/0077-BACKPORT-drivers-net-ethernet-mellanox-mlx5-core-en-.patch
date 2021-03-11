@@ -1,0 +1,71 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx5/core/en/fs.h
+
+Change-Id: Iececa78e908bd169125bee22c1be20e2410fbb58
+---
+ drivers/net/ethernet/mellanox/mlx5/core/en/fs.h | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en/fs.h
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en/fs.h
+@@ -9,6 +9,7 @@ enum {
+ 	MLX5E_TC_TTC_FT_LEVEL,
+ };
+ 
++#ifdef HAVE_TC_FLOWER_OFFLOAD
+ struct mlx5e_tc_table {
+ 	/* protects flow table */
+ 	struct mutex			t_lock;
+@@ -16,12 +17,15 @@ struct mlx5e_tc_table {
+ 
+ 	struct rhashtable               ht;
+ 
++#ifdef HAVE_TCF_PEDIT_TCFP_KEYS_EX
+ 	struct mod_hdr_tbl mod_hdr;
++#endif
+ 	struct mutex hairpin_tbl_lock; /* protects hairpin_tbl */
+ 	DECLARE_HASHTABLE(hairpin_tbl, 8);
+ 
+ 	struct notifier_block     netdevice_nb;
+ };
++#endif
+ 
+ struct mlx5e_flow_table {
+ 	int num_groups;
+@@ -39,9 +43,13 @@ struct mlx5e_l2_rule {
+ struct mlx5e_vlan_table {
+ 	struct mlx5e_flow_table		ft;
+ 	DECLARE_BITMAP(active_cvlans, VLAN_N_VID);
++#ifdef HAVE_NETIF_F_HW_VLAN_STAG_RX
+ 	DECLARE_BITMAP(active_svlans, VLAN_N_VID);
++#endif
+ 	struct mlx5_flow_handle	*active_cvlans_rule[VLAN_N_VID];
++#ifdef HAVE_NETIF_F_HW_VLAN_STAG_RX
+ 	struct mlx5_flow_handle	*active_svlans_rule[VLAN_N_VID];
++#endif
+ 	struct mlx5_flow_handle	*untagged_rule;
+ 	struct mlx5_flow_handle	*any_cvlan_rule;
+ 	struct mlx5_flow_handle	*any_svlan_rule;
+@@ -163,8 +171,12 @@ void mlx5e_ethtool_init_steering(struct
+ void mlx5e_ethtool_cleanup_steering(struct mlx5e_priv *priv);
+ int mlx5e_set_rxnfc(struct net_device *dev, struct ethtool_rxnfc *cmd);
+ int mlx5e_get_rxnfc(struct net_device *dev,
++#ifdef HAVE_ETHTOOL_OPS_GET_RXNFC_U32_RULE_LOCS
+ 		    struct ethtool_rxnfc *info, u32 *rule_locs);
+ #else
++			   struct ethtool_rxnfc *info, void *rule_locs);
++#endif
++#else
+ static inline void mlx5e_ethtool_init_steering(struct mlx5e_priv *priv)    { }
+ static inline void mlx5e_ethtool_cleanup_steering(struct mlx5e_priv *priv) { }
+ #endif /* CONFIG_MLX5_EN_RXNFC */
+@@ -251,7 +263,9 @@ struct mlx5e_flow_steering {
+ #ifdef CONFIG_MLX5_EN_RXNFC
+ 	struct mlx5e_ethtool_steering   ethtool;
+ #endif
++#ifdef HAVE_TC_FLOWER_OFFLOAD
+ 	struct mlx5e_tc_table           tc;
++#endif
+ 	struct mlx5e_vlan_table         vlan;
+ 	struct mlx5e_l2_table           l2;
+ 	struct mlx5e_ttc_table          ttc;

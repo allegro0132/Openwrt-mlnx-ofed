@@ -1,0 +1,70 @@
+From: Alaa Hleihel <alaa@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/hw/mlx4/alias_GUID.c
+
+Change-Id: I41df816c46656e25bef0b0d199dcf60bbd67ffe8
+---
+ drivers/infiniband/hw/mlx4/alias_GUID.c | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+--- a/drivers/infiniband/hw/mlx4/alias_GUID.c
++++ b/drivers/infiniband/hw/mlx4/alias_GUID.c
+@@ -310,7 +310,11 @@ static void aliasguid_query_handler(int
+ 	if (status) {
+ 		pr_debug("(port: %d) failed: status = %d\n",
+ 			 cb_ctx->port, status);
++#ifdef HAVE_KTIME_GET_BOOT_NS
+ 		rec->time_to_run = ktime_get_boot_ns() + 1 * NSEC_PER_SEC;
++#else
++		rec->time_to_run = ktime_get_real_ns() + 1 * NSEC_PER_SEC;
++#endif
+ 		goto out;
+ 	}
+ 
+@@ -416,7 +420,11 @@ next_entry:
+ 			 be64_to_cpu((__force __be64)rec->guid_indexes),
+ 			 be64_to_cpu((__force __be64)applied_guid_indexes),
+ 			 be64_to_cpu((__force __be64)declined_guid_indexes));
++#ifdef HAVE_KTIME_GET_BOOT_NS
+ 		rec->time_to_run = ktime_get_boot_ns() +
++#else
++		rec->time_to_run = ktime_get_real_ns() +
++#endif
+ 			resched_delay_sec * NSEC_PER_SEC;
+ 	} else {
+ 		rec->status = MLX4_GUID_INFO_STATUS_SET;
+@@ -628,7 +636,11 @@ void mlx4_ib_invalidate_all_guid_record(
+ 		queued(not on the timer) the cancel will fail. That is not a problem
+ 		because we just want the work started.
+ 		*/
++#ifdef HAVE___CANCEL_DELAYED_WORK
++		__cancel_delayed_work(&dev->sriov.alias_guid.
++#else
+ 		cancel_delayed_work(&dev->sriov.alias_guid.
++#endif
+ 				      ports_guid[port - 1].alias_guid_work);
+ 		queue_delayed_work(dev->sriov.alias_guid.ports_guid[port - 1].wq,
+ 				   &dev->sriov.alias_guid.ports_guid[port - 1].alias_guid_work,
+@@ -709,7 +721,11 @@ static int get_low_record_time_index(str
+ 		}
+ 	}
+ 	if (resched_delay_sec) {
++#ifdef HAVE_KTIME_GET_BOOT_NS
+ 		u64 curr_time = ktime_get_boot_ns();
++#else
++		u64 curr_time = ktime_get_real_ns();
++#endif
+ 
+ 		*resched_delay_sec = (low_record_time < curr_time) ? 0 :
+ 			div_u64((low_record_time - curr_time), NSEC_PER_SEC);
+@@ -785,7 +801,11 @@ void mlx4_ib_init_alias_guid_work(struct
+ 		  * won't run till previous one is ended as same work
+ 		  * struct is used.
+ 		  */
++#ifdef HAVE___CANCEL_DELAYED_WORK
++		__cancel_delayed_work(&dev->sriov.alias_guid.ports_guid[port].
++#else
+ 		cancel_delayed_work(&dev->sriov.alias_guid.ports_guid[port].
++#endif
+ 				    alias_guid_work);
+ 		queue_delayed_work(dev->sriov.alias_guid.ports_guid[port].wq,
+ 			   &dev->sriov.alias_guid.ports_guid[port].alias_guid_work, 0);

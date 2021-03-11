@@ -1,0 +1,18 @@
+From: Alaa Hleihel <alaa@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/hw/mlx4/cm.c
+
+Change-Id: I9968ae86b2903e44d74b4a9c0b290d04bf0c0ced
+---
+ drivers/infiniband/hw/mlx4/cm.c | 1 -
+ 1 file changed, 1 deletion(-)
+
+--- a/drivers/infiniband/hw/mlx4/cm.c
++++ b/drivers/infiniband/hw/mlx4/cm.c
+@@ -261,7 +261,6 @@ id_map_alloc(struct ib_device *ibdev, in
+ 		spin_unlock(&sriov->id_map_lock);
+ 		return ent;
+ 	}
+-
+ 	/*error flow*/
+ 	kfree(ent);
+ 	mlx4_ib_warn(ibdev, "Allocation failed (err:0x%x)\n", ret);

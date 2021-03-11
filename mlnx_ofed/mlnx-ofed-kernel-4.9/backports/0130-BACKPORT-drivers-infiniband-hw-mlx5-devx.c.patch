@@ -1,0 +1,62 @@
+From: Mikhael Goikhman <migo@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/hw/mlx5/devx.c
+
+Change-Id: If4acbbc40a59e42b873b89b9fe8ceb0ae6315d77
+---
+ drivers/infiniband/hw/mlx5/devx.c | 25 ++++++++++++++++++++-----
+ 1 file changed, 20 insertions(+), 5 deletions(-)
+
+--- a/drivers/infiniband/hw/mlx5/devx.c
++++ b/drivers/infiniband/hw/mlx5/devx.c
+@@ -15,9 +15,14 @@
+ #include <linux/mlx5/eswitch.h>
+ #include <linux/mlx5/vport.h>
+ #include <linux/mlx5/fs.h>
++#include <linux/eventpoll.h>
++#include <linux/file.h>
++#include <linux/srcu.h>
+ #include "mlx5_ib.h"
+ #include "ib_rep.h"
+ #include <linux/xarray.h>
++#include <linux/eventfd.h>
++
+ 
+ #define UVERBS_MODULE_NAME mlx5_ib
+ #include <rdma/uverbs_named_ioctl.h>
+@@ -1483,10 +1488,12 @@ static int devx_handle_mkey_create(struc
+ 	return 0;
+ }
+ 
++#if defined(CONFIG_INFINIBAND_ON_DEMAND_PAGING) && defined(HAVE_CALL_SRCU)
+ static void devx_free_indirect_mkey(struct rcu_head *rcu)
+ {
+ 	kfree(container_of(rcu, struct devx_obj, devx_mr.rcu));
+ }
++#endif
+ 
+ /* This function to delete from the radix tree needs to be called before
+  * destroying the underlying mkey. Otherwise a race might occur in case that
+@@ -1571,11 +1578,19 @@ static int devx_obj_cleanup(struct ib_uo
+ 		devx_cleanup_subscription(dev, sub_entry);
+ 	mutex_unlock(&devx_event_table->event_xa_lock);
+ 
++#ifdef CONFIG_INFINIBAND_ON_DEMAND_PAGING
+ 	if (obj->flags & DEVX_OBJ_FLAGS_INDIRECT_MKEY) {
+-		call_srcu(&dev->mr_srcu, &obj->devx_mr.rcu,
+-			  devx_free_indirect_mkey);
+-		return ret;
+-	}
++#ifdef HAVE_CALL_SRCU
++       	call_srcu(&dev->mr_srcu, &obj->devx_mr.rcu,
++       		  devx_free_indirect_mkey);
++#else
++		synchronize_srcu(&dev->mr_srcu);
++		kfree(obj);
++#endif
++
++       	return ret;
++       }
++#endif
+ 
+ 	kfree(obj);
+ 	return ret;

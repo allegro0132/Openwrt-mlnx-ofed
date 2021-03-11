@@ -1,0 +1,30 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: include/linux/mlx4/cmd.h
+
+Change-Id: I62ef99f2b113b99a3379f31e0d5cab03193038fa
+---
+ include/linux/mlx4/cmd.h | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+--- a/include/linux/mlx4/cmd.h
++++ b/include/linux/mlx4/cmd.h
+@@ -332,7 +332,9 @@ int mlx4_set_vf_vlan(struct mlx4_dev *de
+ int mlx4_set_vf_rate(struct mlx4_dev *dev, int port, int vf, int min_tx_rate,
+ 		     int max_tx_rate);
+ int mlx4_set_vf_spoofchk(struct mlx4_dev *dev, int port, int vf, bool setting);
++#ifdef HAVE_NDO_SET_VF_MAC
+ int mlx4_get_vf_config(struct mlx4_dev *dev, int port, int vf, struct ifla_vf_info *ivf);
++#endif
+ int mlx4_set_vf_link_state(struct mlx4_dev *dev, int port, int vf, int link_state);
+ int mlx4_get_vf_link_state(struct mlx4_dev *dev, int port, int vf);
+ int mlx4_config_dev_retrieval(struct mlx4_dev *dev,
+@@ -340,6 +342,9 @@ int mlx4_config_dev_retrieval(struct mlx
+ void mlx4_cmd_wake_completions(struct mlx4_dev *dev);
+ void mlx4_report_internal_err_comm_event(struct mlx4_dev *dev);
+ ssize_t mlx4_get_vf_rate(struct mlx4_dev *dev, int port, int vf, char *buf);
++#if (defined(HAVE_NETIF_F_HW_VLAN_STAG_RX) && !defined(HAVE_VF_VLAN_PROTO))
++ssize_t mlx4_get_vf_vlan_info(struct mlx4_dev *dev, int port, int vf, char *buf);
++#endif
+ /*
+  * mlx4_get_slave_default_vlan -
+  * return true if VST ( default vlan)

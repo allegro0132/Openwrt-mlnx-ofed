@@ -1,0 +1,22 @@
+From: Alaa Hleihel <alaa@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/hw/mlx4/sysfs.c
+
+Change-Id: I20d35ddb1eb1b45a7a17425ab2ce720c49ccfa82
+---
+ drivers/infiniband/hw/mlx4/sysfs.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+--- a/drivers/infiniband/hw/mlx4/sysfs.c
++++ b/drivers/infiniband/hw/mlx4/sysfs.c
+@@ -420,7 +420,11 @@ static ssize_t port_attr_store(struct ko
+ 	return port_attr->store(p, port_attr, buf, size);
+ }
+ 
++#ifdef CONFIG_COMPAT_IS_CONST_KOBJECT_SYSFS_OPS
+ static const struct sysfs_ops port_sysfs_ops = {
++#else
++static struct sysfs_ops port_sysfs_ops = {
++#endif
+ 	.show = port_attr_show,
+ 	.store = port_attr_store,
+ };

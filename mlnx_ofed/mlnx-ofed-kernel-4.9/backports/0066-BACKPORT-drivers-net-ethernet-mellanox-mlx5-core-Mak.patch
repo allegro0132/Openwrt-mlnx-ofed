@@ -1,0 +1,25 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx5/core/Makefile
+
+Change-Id: I8aa912c7a4032de81621883ab76e77c511834142
+---
+ drivers/net/ethernet/mellanox/mlx5/core/Makefile | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/Makefile
++++ b/drivers/net/ethernet/mellanox/mlx5/core/Makefile
+@@ -54,8 +54,12 @@ mlx5_core-$(CONFIG_MLX5_SW_STEERING) +=
+ #
+ mlx5_core-$(CONFIG_MLX5_ESWITCH)   += eswitch.o eswitch_offloads.o ecpf.o rdma.o
+ mlx5_core-$(CONFIG_MLX5_MPFS)      += lib/mpfs.o
+-mlx5_core-$(CONFIG_VXLAN)          += lib/vxlan.o
+-mlx5_core-$(CONFIG_PTP_1588_CLOCK) += lib/clock.o
++ifneq ($(CONFIG_VXLAN),)
++	mlx5_core-y		+= lib/vxlan.o
++endif
++ifneq ($(CONFIG_PTP_1588_CLOCK),)
++	mlx5_core-y		+= lib/clock.o
++endif
+ 
+ #
+ # Ipoib netdev

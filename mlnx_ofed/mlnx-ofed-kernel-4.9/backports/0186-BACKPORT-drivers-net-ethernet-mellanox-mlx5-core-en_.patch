@@ -1,0 +1,118 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx5/core/en_dcbnl.c
+
+Change-Id: I977b7d53e19bc1624334c19454b644552fb1b5f0
+---
+ drivers/net/ethernet/mellanox/mlx5/core/en_dcbnl.c | 27 +++++++++++++++++++++-
+ 1 file changed, 26 insertions(+), 1 deletion(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en_dcbnl.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en_dcbnl.c
+@@ -53,10 +53,11 @@ enum {
+ 				   MLX5_CAP_QCAM_REG(mdev, qpts) && \
+ 				   MLX5_CAP_QCAM_REG(mdev, qpdpm))
+ 
++#ifdef HAVE_IEEE_DCBNL_ETS
++#ifdef CONFIG_MLX5_CORE_EN_DCB
+ static int mlx5e_set_trust_state(struct mlx5e_priv *priv, u8 trust_state);
+ static int mlx5e_set_dscp2prio(struct mlx5e_priv *priv, u8 dscp, u8 prio);
+ 
+-#ifdef CONFIG_MLX5_CORE_EN_DCB
+ /* If dcbx mode is non-host set the dcbx mode to host.
+  */
+ static int mlx5e_dcbnl_set_dcbx_mode(struct mlx5e_priv *priv,
+@@ -536,6 +537,7 @@ fw_err:
+ 	return err;
+ }
+ 
++#ifdef HAVE_IEEE_GET_SET_MAXRATE
+ static int mlx5e_dcbnl_ieee_getmaxrate(struct net_device *netdev,
+ 				       struct ieee_maxrate *maxrate)
+ {
+@@ -608,6 +610,7 @@ static int mlx5e_dcbnl_ieee_setmaxrate(s
+ 
+ 	return mlx5_modify_port_ets_rate_limit(mdev, max_bw_value, max_bw_unit);
+ }
++#endif
+ 
+ static u8 mlx5e_dcbnl_setall(struct net_device *netdev)
+ {
+@@ -855,8 +858,13 @@ static u8 mlx5e_dcbnl_getcap(struct net_
+ 	return rval;
+ }
+ 
++#ifdef HAVE_DCBNL_RTNL_OPS_GETNUMTCS_RET_INT
+ static int mlx5e_dcbnl_getnumtcs(struct net_device *netdev,
+ 				 int tcs_id, u8 *num)
++#else
++static u8 mlx5e_dcbnl_getnumtcs(struct net_device *netdev,
++				int tcs_id, u8 *num)
++#endif
+ {
+ 	struct mlx5e_priv *priv = netdev_priv(netdev);
+ 	struct mlx5_core_dev *mdev = priv->mdev;
+@@ -894,6 +902,7 @@ static void mlx5e_dcbnl_setpfcstate(stru
+ 	cee_cfg->pfc_enable = state;
+ }
+ 
++#ifdef HAVE_DCBNL_GETBUFFER
+ static int mlx5e_dcbnl_getbuffer(struct net_device *dev,
+ 				 struct dcbnl_buffer *dcb_buffer)
+ {
+@@ -977,20 +986,29 @@ static int mlx5e_dcbnl_setbuffer(struct
+ 					      buffer_size, prio2buffer);
+ 	return err;
+ }
++#endif
+ 
++#ifdef CONFIG_COMPAT_IS_DCBNL_OPS_CONST
+ const struct dcbnl_rtnl_ops mlx5e_dcbnl_ops = {
++#else
++struct dcbnl_rtnl_ops mlx5e_dcbnl_ops = {
++#endif
+ 	.ieee_getets	= mlx5e_dcbnl_ieee_getets,
+ 	.ieee_setets	= mlx5e_dcbnl_ieee_setets,
++#ifdef HAVE_IEEE_GET_SET_MAXRATE
+ 	.ieee_getmaxrate = mlx5e_dcbnl_ieee_getmaxrate,
+ 	.ieee_setmaxrate = mlx5e_dcbnl_ieee_setmaxrate,
++#endif
+ 	.ieee_getpfc	= mlx5e_dcbnl_ieee_getpfc,
+ 	.ieee_setpfc	= mlx5e_dcbnl_ieee_setpfc,
+ 	.ieee_setapp    = mlx5e_dcbnl_ieee_setapp,
+ 	.ieee_delapp    = mlx5e_dcbnl_ieee_delapp,
+ 	.getdcbx	= mlx5e_dcbnl_getdcbx,
+ 	.setdcbx	= mlx5e_dcbnl_setdcbx,
++#ifdef HAVE_DCBNL_GETBUFFER
+ 	.dcbnl_getbuffer = mlx5e_dcbnl_getbuffer,
+ 	.dcbnl_setbuffer = mlx5e_dcbnl_setbuffer,
++#endif
+ 
+ /* CEE interfaces */
+ 	.setall         = mlx5e_dcbnl_setall,
+@@ -1135,7 +1153,9 @@ out:
+ 
+ static int mlx5e_set_trust_state(struct mlx5e_priv *priv, u8 trust_state)
+ {
++#if defined(HAVE_NDO_SETUP_TC_TAKES_TC_SETUP_TYPE) || defined(HAVE_NDO_SETUP_TC_RH_EXTENDED)
+ 	struct tc_mqprio_qopt mqprio = {.num_tc = MLX5E_MAX_NUM_TC};
++#endif
+ 	int err;
+ 
+ 	err = mlx5_set_trust_state(priv->mdev, trust_state);
+@@ -1146,7 +1166,11 @@ static int mlx5e_set_trust_state(struct
+ 
+ 	/* In DSCP trust state, we need 8 send queues per channel */
+ 	if (priv->dcbx_dp.trust_state == MLX5_QPTS_TRUST_DSCP)
++#if defined(HAVE_NDO_SETUP_TC_TAKES_TC_SETUP_TYPE) || defined(HAVE_NDO_SETUP_TC_RH_EXTENDED)
+ 		mlx5e_setup_tc_mqprio(priv->netdev, &mqprio);
++#else
++		mlx5e_setup_tc(priv->netdev, MLX5E_MAX_NUM_TC);
++#endif
+ 
+ 	return err;
+ }
+@@ -1230,3 +1254,4 @@ void mlx5e_dcbnl_initialize(struct mlx5e
+ 	mlx5e_ets_init(priv);
+ }
+ #endif
++#endif

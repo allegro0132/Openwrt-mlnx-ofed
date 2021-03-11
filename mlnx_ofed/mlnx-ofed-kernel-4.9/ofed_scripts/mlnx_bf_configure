@@ -1,0 +1,98 @@
+#!/bin/bash
+# ex:ts=4:sw=4:sts=4:et
+# -*- tab-width: 4; c-basic-offset: 4; indent-tabs-mode: nil -*-
+#
+# Copyright (c) 2020 Mellanox Technologies. All rights reserved.
+#
+# This Software is licensed under one of the following licenses:
+#
+# 1) under the terms of the "Common Public License 1.0" a copy of which is
+#    available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/cpl.php.
+#
+# 2) under the terms of the "The BSD License" a copy of which is
+#    available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/bsd-license.php.
+#
+# 3) under the terms of the "GNU General Public License (GPL) Version 2" a
+#    copy of which is available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/gpl-license.php.
+#
+# Licensee has the right to choose one of the above licenses.
+#
+# Redistributions of source code must retain the above copyright
+# notice and one of the license notices.
+#
+# Redistributions in binary form must reproduce both the above copyright
+# notice, one of the license notices in the documentation
+# and/or other materials provided with the distribution.
+
+PATH=/opt/mellanox/iproute2/sbin:/bin:/sbin:/usr/bin:/usr/sbin
+
+RC=0
+
+is_bf=`lspci -s 00:00.0 2> /dev/null | grep -wq "PCI bridge: Mellanox Technologies" && echo 1 || echo 0`
+if [ $is_bf -ne 1 ]; then
+	exit 0
+fi
+
+prog=`basename $0`
+
+PID=$(pgrep -oxf "/bin/bash /sbin/$prog")
+if [ $$ -ne $PID ] ; then
+        # $prog is running already with PID: $PID
+        exit 0
+fi
+
+for dev in `lspci -n -d 15b3:a2d2 | cut -d ' ' -f 1`
+do
+	if (mstconfig -d ${dev} q 2> /dev/null | grep -q "ECPF_ESWITCH_MANAGER.*ECPF(1)"); then
+		# Make sure the device is in legacy mode before configuring SW steering
+		devlink dev eswitch set pci/0000:${dev} mode legacy
+		# devlink dev param set pci/0000:${dev} name flow_steering_mode value "smfs" cmode runtime || \
+		echo smfs > /sys/bus/pci/devices/0000:${dev}/net/*/compat/devlink/steering_mode
+		rc=$?
+		if [ $rc -ne 0 ]; then
+			logger -t $prog -i "Failed to configure Software Steering for ${dev}"
+			RC=$((RC+rc))
+		else
+			logger -t $prog -i "Configured Software Steering for ${dev}"
+		fi
+		if ! (devlink dev eswitch show pci/0000:${dev} 2> /dev/null | grep -wq switchdev); then
+			devlink dev eswitch set pci/0000:${dev} mode switchdev
+			rc=$?
+			if [ $rc -ne 0 ]; then
+				logger -t $prog -i "Failed to configure switchdev mode for ${dev}"
+				RC=$((RC+rc))
+			else
+				logger -t $prog -i "Configured switchdev mode for ${dev}"
+			fi
+		fi
+	fi
+done
+
+if [ $RC -eq 0 ]; then
+    cpus=`nproc`
+    max_active_miniflows=4
+    if [ $cpus -eq 8 ] ; then
+        miniflow_mask=f0
+        channels_cpu="0-3"
+    else
+        miniflow_mask=ff00
+        channels_cpu="0-7"
+    fi
+
+    echo $max_active_miniflows > /sys/bus/workqueue/devices/miniflow/max_active
+    echo $miniflow_mask > /sys/bus/workqueue/devices/miniflow/cpumask
+
+    set_irq_affinity_cpulist.sh $channels_cpu p0 > /dev/null
+    set_irq_affinity_cpulist.sh $channels_cpu p1 > /dev/null
+
+    logger -t $prog -i "SMFS performance tuning. Active miniflows: $max_active_miniflows miniflow cpumask: $miniflow_mask channels using cpus: $channels_cpu"
+fi
+
+if [ -f /etc/mellanox/mlnx-sf.conf ]; then
+	. /etc/mellanox/mlnx-sf.conf
+fi
+
+exit $RC

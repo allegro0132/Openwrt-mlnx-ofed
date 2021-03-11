@@ -1,0 +1,88 @@
+From: Mikhael Goikhman <migo@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx5/core/en/health.h
+
+Change-Id: Ibd1c6919fc12fdd5125f9e8eb3e63bf51caa1b32
+---
+ .../ethernet/mellanox/mlx5/core/en/health.h   | 50 +++++++++++++++++++
+ 1 file changed, 50 insertions(+)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en/health.h
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en/health.h
+@@ -21,10 +21,12 @@ void mlx5e_reporter_tx_destroy(struct ml
+ void mlx5e_reporter_tx_err_cqe(struct mlx5e_txqsq *sq);
+ int mlx5e_reporter_tx_timeout(struct mlx5e_txqsq *sq);
+ 
++#ifdef HAVE_DEVLINK_HEALTH_REPORT_SUPPORT
+ int mlx5e_reporter_cq_diagnose(struct mlx5e_cq *cq, struct devlink_fmsg *fmsg);
+ int mlx5e_reporter_cq_common_diagnose(struct mlx5e_cq *cq, struct devlink_fmsg *fmsg);
+ int mlx5e_reporter_named_obj_nest_start(struct devlink_fmsg *fmsg, char *name);
+ int mlx5e_reporter_named_obj_nest_end(struct devlink_fmsg *fmsg);
++#endif /* HAVE_DEVLINK_HEALTH_REPORT_SUPPORT */
+ 
+ int mlx5e_reporter_rx_create(struct mlx5e_priv *priv);
+ void mlx5e_reporter_rx_destroy(struct mlx5e_priv *priv);
+@@ -36,7 +38,9 @@ void mlx5e_reporter_rx_timeout(struct ml
+ 
+ struct mlx5e_err_ctx {
+ 	int (*recover)(void *ctx);
++#ifdef HAVE_DEVLINK_HEALTH_REPORT_SUPPORT
+ 	int (*dump)(struct mlx5e_priv *priv, struct devlink_fmsg *fmsg, void *ctx);
++#endif /* HAVE_DEVLINK_HEALTH_REPORT_SUPPORT */
+ 	void *ctx;
+ };
+ 
+@@ -49,8 +53,54 @@ int mlx5e_health_report(struct mlx5e_pri
+ int mlx5e_health_create_reporters(struct mlx5e_priv *priv);
+ void mlx5e_health_destroy_reporters(struct mlx5e_priv *priv);
+ void mlx5e_health_channels_update(struct mlx5e_priv *priv);
++#ifdef HAVE_DEVLINK_HEALTH_REPORT_SUPPORT
+ int mlx5e_health_rsc_fmsg_dump(struct mlx5e_priv *priv, struct mlx5_rsc_key *key,
+ 			       struct devlink_fmsg *fmsg);
+ int mlx5e_health_queue_dump(struct mlx5e_priv *priv, struct devlink_fmsg *fmsg,
+ 			    int queue_idx, char *lbl);
++
++#ifndef HAVE_DEVLINK_FMSG_BINARY_PUT
++
++#include <net/genetlink.h>
++#include <linux/genetlink.h>
++#include <linux/netlink.h>
++
++#define DEVLINK_FMSG_MAX_SIZE (GENLMSG_DEFAULT_SIZE - GENL_HDRLEN - NLA_HDRLEN)
++
++struct devlink_fmsg {
++        struct list_head item_list;
++};
++
++struct devlink_fmsg_item {
++        struct list_head list;
++        int attrtype;
++        u8 nla_type;
++        u16 len;
++        int value[0];
++};
++
++static inline int devlink_fmsg_binary_put(struct devlink_fmsg *fmsg,
++                                  const void *value, u16 value_len)
++{
++        struct devlink_fmsg_item *item;
++
++        if (value_len > DEVLINK_FMSG_MAX_SIZE)
++                return -EMSGSIZE;
++
++        item = kzalloc(sizeof(*item) + value_len, GFP_KERNEL);
++        if (!item)
++                return -ENOMEM;
++
++        item->nla_type = NLA_BINARY;
++        item->len = value_len;
++        item->attrtype = DEVLINK_ATTR_FMSG_OBJ_VALUE_DATA;
++        memcpy(&item->value, value, item->len);
++        list_add_tail(&item->list, &fmsg->item_list);
++
++        return 0;
++}
++#endif /* HAVE_DEVLINK_FMSG_BINARY_PUT */
++
++#endif /* HAVE_DEVLINK_HEALTH_REPORT_SUPPORT */
++
+ #endif

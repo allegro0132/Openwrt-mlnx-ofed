@@ -1,0 +1,677 @@
+#!/bin/bash
+#
+# Copyright (c) 2014 Mellanox Technologies. All rights reserved.
+#
+# This Software is licensed under one of the following licenses:
+#
+# 1) under the terms of the "Common Public License 1.0" a copy of which is
+#    available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/cpl.php.
+#
+# 2) under the terms of the "The BSD License" a copy of which is
+#    available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/bsd-license.php.
+#
+# 3) under the terms of the "GNU General Public License (GPL) Version 2" a
+#    copy of which is available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/gpl-license.php.
+#
+# Licensee has the right to choose one of the above licenses.
+#
+# Redistributions of source code must retain the above copyright
+# notice and one of the license notices.
+#
+# Redistributions in binary form must reproduce both the above copyright
+# notice, one of the license notices in the documentation
+# and/or other materials provided with the distribution.
+#
+#
+
+### BEGIN INIT INFO
+# Provides:       mlnx-en.d
+# Required-Start: $local_fs
+# Required-Stop:
+# X-Start-Before: networking
+# Default-Start: 2 3 4 5
+# Default-Stop: 0 1 6
+# Description:    Activates/Deactivates mlnx-en Driver to \
+#                 start at boot time.
+### END INIT INFO
+
+# config: /etc/mlxn-en.conf
+CONFIG=${CONFIG:-"/etc/mlnx-en.conf"}
+export LANG="C"
+PATH=$PATH:/sbin:/usr/bin:/lib/udev
+
+HAS_IFUP=1
+if [ ! -x /sbin/ifup ]; then
+    # On systems with no ifup command, we are likely to have a dynamic
+    # network system and the network interface is started automatically
+    HAS_IFUP=0
+fi
+
+if [ ! -f $CONFIG ]; then
+    echo No mlnx-en configuration found
+    exit 0
+fi
+
+. $CONFIG
+
+# Allow calling the service script with the option 'stop' for unloading the driver stack.
+# This flag should be disabled when the OS root file system is on remote storage.
+ALLOW_STOP=${ALLOW_STOP:-"yes"}
+
+RUN_SYSCTL=${RUN_SYSCTL:-"no"}
+RUN_MLNX_TUNE=${RUN_MLNX_TUNE:-"no"}
+
+UNLOAD_MODULES="mlx5_ib mlx5_core mlx4_fc mlx4_en mlx4_ib mlx4_core mlxfw memtrack compat mlx_compat"
+STATUS_MODULES="mlx4_en mlx4_core mlx5_core mlxfw"
+
+# Allow unsupported modules, if disallowed by current configuration
+modprobe=/sbin/modprobe
+if ${modprobe} -c | grep -q '^allow_unsupported_modules  *0'; then
+    modprobe="${modprobe} --allow-unsupported-modules"
+fi
+
+ACTION=$1
+shift
+
+#########################################################################
+# Get a sane screen width
+[ -z "${COLUMNS:-}" ] && COLUMNS=80
+
+[ -z "${CONSOLETYPE:-}" ] && [ -x /sbin/consoletype ] && CONSOLETYPE="`/sbin/consoletype`"
+
+# Read in our configuration
+if [ -z "${BOOTUP:-}" ]; then
+    if [ -f /etc/sysconfig/init ]; then
+        . /etc/sysconfig/init
+    else
+        # This all seem confusing? Look in /etc/sysconfig/init,
+        # or in /usr/doc/initscripts-*/sysconfig.txt
+        BOOTUP=color
+        RES_COL=60
+        MOVE_TO_COL="echo -en \\033[${RES_COL}G"
+        SETCOLOR_SUCCESS="echo -en \\033[1;32m"
+        SETCOLOR_FAILURE="echo -en \\033[1;31m"
+        SETCOLOR_WARNING="echo -en \\033[1;33m"
+        SETCOLOR_NORMAL="echo -en \\033[0;39m"
+        LOGLEVEL=1
+    fi
+    if [ "$CONSOLETYPE" = "serial" ]; then
+        BOOTUP=serial
+        MOVE_TO_COL=
+        SETCOLOR_SUCCESS=
+        SETCOLOR_FAILURE=
+        SETCOLOR_WARNING=
+        SETCOLOR_NORMAL=
+    fi
+fi
+
+if [ "${BOOTUP:-}" != "verbose" ]; then
+    INITLOG_ARGS="-q"
+else
+    INITLOG_ARGS=
+fi
+
+echo_success() {
+    echo -n $@
+    [ "$BOOTUP" = "color" ] && $MOVE_TO_COL
+    echo -n "[  "
+    [ "$BOOTUP" = "color" ] && $SETCOLOR_SUCCESS
+    echo -n $"OK"
+    [ "$BOOTUP" = "color" ] && $SETCOLOR_NORMAL
+    echo -n "  ]"
+    echo -e "\r"
+    return 0
+}
+
+echo_done() {
+    echo -n $@
+    [ "$BOOTUP" = "color" ] && $MOVE_TO_COL
+    echo -n "[  "
+    [ "$BOOTUP" = "color" ] && $SETCOLOR_NORMAL
+    echo -n $"done"
+    [ "$BOOTUP" = "color" ] && $SETCOLOR_NORMAL
+    echo -n "  ]"
+    echo -e "\r"
+    return 0
+}
+
+echo_failure() {
+    echo -n $@
+    [ "$BOOTUP" = "color" ] && $MOVE_TO_COL
+    echo -n "["
+    [ "$BOOTUP" = "color" ] && $SETCOLOR_FAILURE
+    echo -n $"FAILED"
+    [ "$BOOTUP" = "color" ] && $SETCOLOR_NORMAL
+    echo -n "]"
+    echo -e "\r"
+    return 1
+}
+
+echo_warning() {
+    echo -n $@
+    [ "$BOOTUP" = "color" ] && $MOVE_TO_COL
+    echo -n "["
+    [ "$BOOTUP" = "color" ] && $SETCOLOR_WARNING
+    echo -n $"WARNING"
+    [ "$BOOTUP" = "color" ] && $SETCOLOR_NORMAL
+    echo -n "]"
+    echo -e "\r"
+    return 1
+}
+
+# If module $1 is loaded return - 0 else - 1
+is_module()
+{
+    local RC
+
+    /sbin/lsmod | grep -w "$1" > /dev/null 2>&1
+    RC=$?
+
+    return $RC
+}
+
+log_msg()
+{
+    logger -i "mlnx-en.d: $@"
+}
+
+load_module()
+{
+    local module=$1
+    filename=`modinfo $module 2>/dev/null | grep filename | awk '{print $NF}'`
+
+    if [ ! -n "$filename" ]; then
+        echo_failure "Module $module does not exist!"
+        log_msg "ERROR: Module $module does not exist!"
+        return 1
+    fi
+
+    ${modprobe} $module > /dev/null 2>&1
+}
+
+get_sw_fw_info()
+{
+    INFO=/etc/infiniband/info
+    OFEDHOME="/usr/local"
+    if [ -x ${INFO} ]; then
+        OFEDHOME=$(${INFO} | grep -w prefix | cut -d '=' -f 2)
+    fi
+    MREAD=$(which mstmread 2> /dev/null)
+
+    # Get OFED Build id
+    if [ -r ${OFEDHOME}/BUILD_ID ]; then
+        echo  "Software"
+        echo  "-------------------------------------"
+        printf "Build ID:\n"
+        cat ${OFEDHOME}/BUILD_ID
+        echo  "-------------------------------------"
+    fi
+
+    # Get FW version
+    if [ ! -x ${MREAD} ]; then
+        return 1
+    fi
+
+    vendor="15b3"
+    slots=$(lspci -n -d "${vendor}:" 2> /dev/null | grep -v "5a46" | cut -d ' ' -f 1)
+    for mst_device in $slots
+    do
+        major=$($MREAD ${mst_device} 0x82478 2> /dev/null | cut -d ':' -f 2)
+        subminor__minor=$($MREAD ${mst_device} 0x8247c 2> /dev/null | cut -d ':' -f 2)
+        ftime=$($MREAD ${mst_device} 0x82480 2> /dev/null | cut -d ':' -f 2)
+        fdate=$($MREAD ${mst_device} 0x82484 2> /dev/null | cut -d ':' -f 2)
+
+        major=$(echo -n $major | cut -d x -f 2 | cut -b 4)
+        subminor__minor1=$(echo -n $subminor__minor | cut -d x -f 2 | cut -b 3,4)
+        subminor__minor2=$(echo -n $subminor__minor | cut -d x -f 2 | cut -b 5,6,7,8)
+        echo
+        echo "Device ${mst_device} Info:"
+        echo "Firmware:"
+
+        printf "\tVersion:"
+        printf "\t$major.$subminor__minor1.$subminor__minor2\n"
+
+        day=$(echo -n $fdate | cut -d x -f 2 | cut -b 7,8)
+        month=$(echo -n $fdate | cut -d x -f 2 | cut -b 5,6)
+        year=$(echo -n $fdate | cut -d x -f 2 | cut -b 1,2,3,4)
+        hour=$(echo -n $ftime | cut -d x -f 2 | cut -b 5,6)
+        min=$(echo -n $ftime | cut -d x -f 2 | cut -b 3,4)
+        sec=$(echo -n $ftime | cut -d x -f 2 | cut -b 1,2)
+
+        printf "\tDate:"
+        printf "\t$day/$month/$year $hour:$min:$sec\n"
+    done
+}
+
+# Create debug info
+get_debug_info()
+{
+    trap '' 2 9 15
+    if [ -x /usr/sbin/sysinfo-snapshot.py ]; then
+        echo
+        echo "Please run /usr/sbin/sysinfo-snapshot.py to collect the debug information"
+        echo "and open an issue in the http://support.mellanox.com/SupportWeb/service_center/SelfService"
+        echo
+    elif [ -x /usr/sbin/sysinfo-snapshot.sh ]; then
+        echo
+        echo "Please run /usr/sbin/sysinfo-snapshot.sh to collect the debug information"
+        echo "and open an issue in the http://support.mellanox.com/SupportWeb/service_center/SelfService"
+        echo
+    else
+        DEBUG_INFO=/tmp/ib_debug_info.log
+        /bin/rm -f $DEBUG_INFO
+        touch $DEBUG_INFO
+        echo "Hostname: `hostname -s`" >> $DEBUG_INFO
+        test -e /etc/issue && echo "OS: `cat /etc/issue`" >> $DEBUG_INFO
+        test -e /etc/os-release && echo "OS: `cat /etc/os-release`" >> $DEBUG_INFO
+        echo "Current kernel: `uname -r`" >> $DEBUG_INFO
+        echo "Architecture: `uname -m`" >> $DEBUG_INFO
+        which gcc &>/dev/null && echo "GCC version: `gcc --version`"  >> $DEBUG_INFO
+        echo "CPU: `cat /proc/cpuinfo | /bin/grep -E \"model name|arch\" | head -1`" >> $DEBUG_INFO
+        echo "`cat /proc/meminfo | /bin/grep \"MemTotal\"`" >> $DEBUG_INFO
+        echo "Chipset: `/sbin/lspci 2> /dev/null | head -1 | cut -d ':' -f 2-`" >> $DEBUG_INFO
+
+        echo >> $DEBUG_INFO
+        get_sw_fw_info >> $DEBUG_INFO
+        echo >> $DEBUG_INFO
+
+        echo >> $DEBUG_INFO
+        echo "############# LSPCI ##############" >> $DEBUG_INFO
+        /sbin/lspci 2> /dev/null >> $DEBUG_INFO
+
+        echo >> $DEBUG_INFO
+        echo "############# LSPCI -N ##############" >> $DEBUG_INFO
+        /sbin/lspci -n 2> /dev/null >> $DEBUG_INFO
+
+        echo >> $DEBUG_INFO
+        echo "############# LSMOD ##############" >> $DEBUG_INFO
+        /sbin/lsmod >> $DEBUG_INFO
+
+        echo >> $DEBUG_INFO
+        echo "############# DMESG ##############" >> $DEBUG_INFO
+        /bin/dmesg >> $DEBUG_INFO
+
+        if [ -r /var/log/messages ]; then
+            echo >> $DEBUG_INFO
+            echo "############# Messages ##############" >> $DEBUG_INFO
+            tail -50 /var/log/messages >> $DEBUG_INFO
+        fi
+
+        echo >> $DEBUG_INFO
+        echo "############# Running Processes ##############" >> $DEBUG_INFO
+        /bin/ps -ef >> $DEBUG_INFO
+        echo "##############################################" >> $DEBUG_INFO
+
+        echo
+        echo "Please open an issue in the http://support.mellanox.com/SupportWeb/service_center/SelfService and attach $DEBUG_INFO"
+        echo
+    fi
+}
+
+get_mlx_en_interfaces()
+{
+    mlx_en_interfaces=""
+    for ethpath in /sys/class/net/*
+    do
+        if (grep 0x15b3 ${ethpath}/device/vendor > /dev/null 2>&1); then
+            mlx_en_interfaces="$mlx_en_interfaces ${ethpath##*/}"
+        fi
+    done
+}
+
+# Module paramter values printed by the kernel can be different
+# than what we have in conf files. Covert their values to be similar to
+# kernel's output, so that we can compare them.
+convert_mod_param()
+{
+    local mod=$1; shift
+    local param_name=$1; shift
+    local val=$1; shift
+
+    export param_name
+    local paramdesc=$(modinfo "$mod" | perl -ne '/$ENV{"param_name"}/ && do {$a=1; print; next}; /parm:/ && do {$a=0}; print if $a')
+    unset param_name
+
+    case "$paramdesc" in
+        *\(int\)* | *\(uint\)* | *\(long\)* | *\(ulong\)* | *\(short\)* | *\(ushort\)*)
+        val=$(printf "%d" "$val")
+        ;;
+        *\(bool\)*)
+        case "$val" in
+            0 | n | N)
+            val=N
+            ;;
+            1 | y | Y)
+            val=Y
+            ;;
+        esac
+        ;;
+    esac
+
+    echo $val
+}
+
+start()
+{
+    local RC=0
+
+    # W/A: inbox drivers are loaded at boot instead of new ones
+    local mlxkos=$(/sbin/lsmod 2>/dev/null | grep '^mlx' | cut -d" " -f"1")
+    if [ "X$mlxkos" != "X" ]; then
+        for mlxko in $mlxkos
+        do
+            local loaded_srcver=$(/bin/cat /sys/module/$mlxko/srcversion 2>/dev/null)
+            local curr_srcver=$(/sbin/modinfo $mlxko 2>/dev/null | grep srcversion | awk '{print $NF}')
+            if [ "X$loaded_srcver" != "X$curr_srcver" ]; then
+                log_msg "start(): Detected loaded old version of module '$mlxko', calling stop..."
+                stop
+                break
+            fi
+        done
+    fi
+
+    # W/A: modules loaded from initrd without taking new params from /etc/modprobe.d/
+    local goFlag=1
+    OIFS="${IFS}"
+    NIFS=$'\n'
+    IFS="${NIFS}"
+    for line in $(grep -rE "options.*mlx" /etc/modprobe.d/*.conf 2>/dev/null | grep -v ":#" | cut -d":" -f"2-" | uniq)
+    do
+        IFS="${OIFS}"
+        local curr_mod=$(echo $line | sed -r -e 's/.*options //g' | awk '{print $NR}')
+        if ! is_module $curr_mod; then
+            continue
+        fi
+        for item in $(echo $line | sed -r -e "s/.*options\s*${curr_mod}//g")
+        do
+            local param=${item%=*}
+            local conf_value=${item##*=}
+            local real_value=$(cat /sys/module/${curr_mod}/parameters/${param} 2>/dev/null)
+            conf_value=$(convert_mod_param $curr_mod $param $conf_value)
+            real_value=$(convert_mod_param $curr_mod $param $real_value)
+            if [ "X$conf_value" != "X$real_value" ]; then
+                log_msg "start(): Detected '$curr_mod' loaded with '$param=$real_value' instead of '$param=$conf_value' as configured under /etc/modprobe.d/, calling stop..."
+                goFlag=0
+                stop
+                break
+            fi
+        done
+        if [ $goFlag -ne 1 ]; then
+            break
+        fi
+        IFS="${NIFS}"
+    done
+    IFS="${OIFS}"
+
+    if [ "X${MLX4_LOAD}" == "Xyes" ]; then
+        load_module mlx4_core
+        my_rc=$?
+        if [ $my_rc -ne 0 ]; then
+            echo_failure $"Loading Mellanox MLX4 NIC driver: "
+        fi
+        RC=$[ $RC + $my_rc ]
+
+        load_module mlx4_en
+        my_rc=$?
+        if [ $my_rc -ne 0 ]; then
+            echo_failure $"Loading Mellanox MLX4_EN NIC driver: "
+        fi
+        RC=$[ $RC + $my_rc ]
+    fi
+
+    if [ "X${MLX5_LOAD}" == "Xyes" ]; then
+        load_module mlx5_core
+        my_rc=$?
+        if [ $my_rc -ne 0 ]; then
+            echo_failure $"Loading Mellanox MLX5 NIC driver: "
+        fi
+        RC=$[ $RC + $my_rc ]
+    fi
+
+    if [ $RC -eq 0 ]; then
+        echo_success $"Loading NIC driver: "
+    else
+        echo_failure $"Loading NIC driver: "
+        get_debug_info
+        exit 1
+    fi
+
+    if [ -x /sbin/mlnx_bf_configure  ]; then
+        /sbin/mlnx_bf_configure
+    fi
+
+    if [ $my_rc -eq 0 -a "$HAS_IFUP" = "1" ]; then
+        # Bring up network interfaces
+        sleep 1
+        get_mlx_en_interfaces
+        for en_i in $mlx_en_interfaces
+        do
+            /sbin/ifup --force $en_i 2> /dev/null
+            bond=`/usr/sbin/net-interfaces get-bond-master $en_i 2>/dev/null`
+            if [ ! -z "$bond" ]; then
+                /sbin/ifenslave $bond $en_i > /dev/null 2>&1
+            fi
+        done
+        /sbin/ifup --force -a >/dev/null 2>&1
+    fi
+
+    if  [ -x /sbin/sysctl_perf_tuning ] && [ "X${RUN_SYSCTL}" == "Xyes" ]; then
+        /sbin/sysctl_perf_tuning load
+    fi
+
+    if [ -x /usr/sbin/mlnx_tune ] && [ "X${RUN_MLNX_TUNE}" == "Xyes" ];then
+        /usr/sbin/mlnx_tune > /dev/null 2>&1
+    fi
+
+    # send SIGHUP to irqbalance so that it will rescan the irqs
+    irqbalance_pid=$(ps -C irqbalance -o pid= 2>/dev/null)
+    if [ "X${irqbalance_pid}" != "X" ]; then
+        kill -s SIGHUP ${irqbalance_pid} >/dev/null 2>&1
+    fi
+
+    return $RC
+}
+
+UNLOAD_REC_TIMEOUT=100
+unload_rec()
+{
+    local mod=$1
+    shift
+
+    if is_module $mod ; then
+    ${modprobe} -r $mod >/dev/null 2>&1
+    if [ $? -ne 0 ];then
+        for dep in `/sbin/rmmod $mod 2>&1 | grep "is in use by" | sed -r -e 's/.*use by[:]* //g' | sed -e 's/,/ /g'`
+            do
+                # if $dep was not loaded by mlnx-en.d, don't unload it; fail with error.
+                if ! `echo $UNLOAD_MODULES | grep -q $dep` ; then
+                        rm_mod $mod
+                else
+                        unload_rec $dep
+                fi
+            done
+        fi
+        if is_module $mod ; then
+            if [ "X$RUNMODE" == "Xauto" ] && [ $UNLOAD_REC_TIMEOUT -gt 0 ]; then
+                case "$mod" in
+                    mlx*)
+                    let UNLOAD_REC_TIMEOUT--
+                    sleep 1
+                    unload_rec $mod
+                    ;;
+                    *)
+                    rm_mod $mod
+                    ;;
+                esac
+            else
+                rm_mod $mod
+            fi
+        fi
+    fi
+}
+
+rm_mod()
+{
+    local mod=$1
+    shift
+
+    unload_log=`/sbin/rmmod $mod 2>&1`
+    if [ $? -ne 0 ]; then
+        echo_failure $"Unloading $mod"
+        if [ ! -z "${unload_log}" ]; then
+            echo $unload_log
+        fi
+        # get_debug_info
+        [ ! -z $2 ] && echo $2
+        exit 1
+    fi
+}
+
+unload()
+{
+    # Unload module $1
+    local mod=$1
+
+    if is_module $mod; then
+        if [ "X$mod" == "Xcompat" ] && !(grep -q mlnx /sys/module/compat/parameters/* 2>/dev/null); then
+            return
+        fi
+        unload_rec $mod
+    fi
+}
+
+stop()
+{
+# Unload modules
+    if [ "$UNLOAD_MODULES" != "" ]; then
+        for mod in  $UNLOAD_MODULES
+        do
+            unload $mod
+        done
+    fi
+
+    if  [ -x /sbin/sysctl_perf_tuning ] && [ "X${RUN_SYSCTL}" == "Xyes" ]; then
+        /sbin/sysctl_perf_tuning unload
+    fi
+
+    echo_success $"Unloading NIC driver: "
+    sleep 1
+}
+
+status()
+{
+    local RC=0
+
+    local mod_loaded=0
+    if is_module mlx4_core && is_module mlx4_en; then
+        echo
+        echo "  MLX4 NIC driver loaded"
+        echo
+        mod_loaded=1
+    fi
+
+    if is_module mlx5_core; then
+        echo
+        echo "  MLX5 NIC driver loaded"
+        echo
+        mod_loaded=1
+    fi
+
+    if [ $mod_loaded -eq 0 ]; then
+        echo
+        echo $"NIC driver is not loaded"
+        echo
+    fi
+
+    if is_module mlx4_en || is_module mlx5_core; then
+        get_mlx_en_interfaces
+        if [ -n "$mlx_en_interfaces" ]; then
+            echo $"Configured Mellanox EN devices:"
+            echo $mlx_en_interfaces
+            echo
+            echo $"Currently active Mellanox devices:"
+
+            for i in $mlx_en_interfaces
+            do
+                 echo `/sbin/ip -o link show $i | awk -F ": " '/UP>/ { print $2 }'`
+            done
+        fi
+    fi
+    echo
+
+    local cnt=0
+
+    for mod in  $STATUS_MODULES
+    do
+        if is_module $mod; then
+            [ $cnt -eq 0 ] && echo "The following mlnx-en modules are loaded:" && echo
+            let cnt++
+            echo "  $mod"
+        fi
+    done
+    echo
+
+    return $RC
+}
+
+RC=0
+start_time=$(date +%s | tr -d '[:space:]')
+
+trap_handler()
+{
+    let run_time=$(date +%s | tr -d '[:space:]')-${start_time}
+
+    # Ask to wait for 5 seconds if trying to stop mlnx-en
+    if [ $run_time -gt 5 ] && [ "$ACTION" == "stop" ]; then
+        printf "\nProbably some application are still using mlnx-en modules...\n"
+    else
+        printf "\nPlease wait ...\n"
+    fi
+    return 0
+}
+
+trap 'trap_handler' 2 9 15
+
+case $ACTION in
+    start)
+        start
+        RC=$?
+        ;;
+    stop)
+        if [ "X${ALLOW_STOP}" != "Xyes" ]; then
+            echo "ERROR: Option 'stop' is disabled!"
+            log_msg "ERROR: Option 'stop' is disabled!"
+            echo "Either use 'force-stop', or enable 'stop' by setting 'ALLOW_STOP=yes' in your ${CONFIG} file"
+            exit 1
+        fi
+        stop
+        RC=$?
+        ;;
+    force-stop)
+        stop
+        RC=$?
+        ;;
+    restart)
+        stop
+        RC=$?
+        start
+        RC=$(($RC + $?))
+        ;;
+    status)
+        status
+        RC=$?
+        ;;
+    *)
+        echo
+        echo "Usage: `basename $0` {start|stop|force-stop|restart|status}"
+        echo
+        exit 1
+        ;;
+    esac
+
+exit $RC
+
+# vi: ts=4 sts=4 sw=0 expandtab:

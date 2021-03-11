@@ -1,0 +1,43 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx5/core/lib/vxlan.c
+
+Change-Id: Ia5cc0e402b84995eddf319186f1c26e5bdcd0873
+---
+ drivers/net/ethernet/mellanox/mlx5/core/lib/vxlan.c | 13 ++++++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/lib/vxlan.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/lib/vxlan.c
+@@ -84,7 +84,12 @@ mlx5_vxlan_lookup_port_locked(struct mlx
+ {
+ 	struct mlx5_vxlan_port *vxlanp;
+ 
++#ifdef HAVE_HLIST_FOR_EACH_ENTRY_3_PARAMS
+ 	hash_for_each_possible(vxlan->htable, vxlanp, hlist, port) {
++#else
++	COMPAT_HL_NODE
++	hash_for_each_possible(vxlan->htable, vxlanp, hlnode, hlist, port) {
++#endif
+ 		if (vxlanp->udp_port == port)
+ 			return vxlanp;
+ 	}
+@@ -216,12 +221,18 @@ void mlx5_vxlan_destroy(struct mlx5_vxla
+ 	struct mlx5_vxlan_port *vxlanp;
+ 	struct hlist_node *tmp;
+ 	int bkt;
+-
++#ifndef HAVE_HLIST_FOR_EACH_ENTRY_3_PARAMS
++	COMPAT_HL_NODE
++#endif
+ 	if (!mlx5_vxlan_allowed(vxlan))
+ 		return;
+ 
+ 	/* Lockless since we are the only hash table consumers*/
++#ifdef HAVE_HLIST_FOR_EACH_ENTRY_3_PARAMS
+ 	hash_for_each_safe(vxlan->htable, bkt, tmp, vxlanp, hlist) {
++#else
++	hash_for_each_safe(vxlan->htable, bkt, tmp, hlnode, vxlanp, hlist) {
++#endif
+ 		hash_del(&vxlanp->hlist);
+ 		mlx5_vxlan_core_del_port_cmd(vxlan->mdev, vxlanp->udp_port);
+ 		kfree(vxlanp);

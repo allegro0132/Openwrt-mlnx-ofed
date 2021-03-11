@@ -1,0 +1,74 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/ulp/ipoib/ipoib_ib.c
+
+Change-Id: Icd3be368ca07f8ca24932d061b9ce8f094a82b1c
+---
+ drivers/infiniband/ulp/ipoib/ipoib_ib.c | 27 ++++++++++++++++++++++++---
+ 1 file changed, 24 insertions(+), 3 deletions(-)
+
+--- a/drivers/infiniband/ulp/ipoib/ipoib_ib.c
++++ b/drivers/infiniband/ulp/ipoib/ipoib_ib.c
+@@ -202,7 +202,10 @@ static inline void ipoib_create_repath_e
+ 	else
+ 		kfree(arp_repath);
+ }
+-
++#ifndef HAVE_NETDEV_RX_HANDLER_REGISTER
++int (*eth_ipoib_handle_frame_hook)(struct sk_buff **skb) = NULL;
++EXPORT_SYMBOL_GPL(eth_ipoib_handle_frame_hook);
++#endif
+ static void ipoib_ib_handle_rx_wc(struct net_device *dev, struct ib_wc *wc)
+ {
+ 	struct ipoib_dev_priv *priv = ipoib_priv(dev);
+@@ -283,7 +286,10 @@ static void ipoib_ib_handle_rx_wc(struct
+ 	}
+ 
+ 	skb_pull(skb, IB_GRH_BYTES);
+-
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,14,0)) && ! defined(HAVE_SK_BUFF_CSUM_LEVEL)
++	/* indicate size for reasmb, only for old kernels */
++	skb->truesize = SKB_TRUESIZE(skb->len);
++#endif
+ 	skb->protocol = ((struct ipoib_header *) skb->data)->proto;
+ 	skb_add_pseudo_hdr(skb);
+ 
+@@ -299,8 +305,14 @@ static void ipoib_ib_handle_rx_wc(struct
+ 	if ((dev->features & NETIF_F_RXCSUM) &&
+ 			likely(wc->wc_flags & IB_WC_IP_CSUM_OK))
+ 		skb->ip_summed = CHECKSUM_UNNECESSARY;
+-
++#ifdef CONFIG_COMPAT_LRO_ENABLED_IPOIB
++	if (dev->features & NETIF_F_LRO)
++		lro_receive_skb(&priv->lro.lro_mgr, skb, NULL);
++	else
++		netif_receive_skb(skb);
++#else
+ 	napi_gro_receive(&priv->recv_napi, skb);
++#endif
+ 
+ repost:
+ 	if (unlikely(ipoib_ib_post_receive(dev, wr_id)))
+@@ -329,7 +341,12 @@ int ipoib_dma_map_tx(struct ib_device *c
+ 		const skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
+ 		mapping[i + off] = ib_dma_map_page(ca,
+ 						 skb_frag_page(frag),
++#ifdef HAVE_SKB_FRAG_OFF
++						 skb_frag_off(frag),
++						 skb_frag_size(frag),
++#else
+ 						 frag->page_offset, skb_frag_size(frag),
++#endif
+ 						 DMA_TO_DEVICE);
+ 		if (unlikely(ib_dma_mapping_error(ca, mapping[i + off])))
+ 			goto partial_error;
+@@ -520,6 +537,10 @@ poll_more:
+ 	}
+ 
+ 	if (done < budget) {
++#ifdef CONFIG_COMPAT_LRO_ENABLED_IPOIB
++		if (dev->features & NETIF_F_LRO)
++			lro_flush_all(&priv->lro.lro_mgr);
++#endif
+ 		napi_complete(napi);
+ 		if (unlikely(ib_req_notify_cq(priv->recv_cq,
+ 					      IB_CQ_NEXT_COMP |

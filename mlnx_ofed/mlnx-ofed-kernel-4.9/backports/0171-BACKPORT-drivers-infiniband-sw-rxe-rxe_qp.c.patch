@@ -1,0 +1,36 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/sw/rxe/rxe_qp.c
+
+Change-Id: I3ed36fdc4efe60ad0831fd6d018e50669bbbfa00
+---
+ drivers/infiniband/sw/rxe/rxe_qp.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+--- a/drivers/infiniband/sw/rxe/rxe_qp.c
++++ b/drivers/infiniband/sw/rxe/rxe_qp.c
+@@ -236,7 +236,11 @@ static int rxe_qp_init_req(struct rxe_de
+ 	 * (0xc000 - 0xffff).
+ 	 */
+ 	qp->src_port = RXE_ROCE_V2_SPORT +
++#ifdef HAVE_HASH_32_GENERIC
+ 		(hash_32_generic(qp_num(qp), 14) & 0x3fff);
++#else
++		(hash_32(qp_num(qp), 14) & 0x3fff);
++#endif
+ 
+ 	qp->sq.max_wr		= init->cap.max_send_wr;
+ 	qp->sq.max_sge		= init->cap.max_send_sge;
+@@ -278,8 +282,13 @@ static int rxe_qp_init_req(struct rxe_de
+ 
+ 	qp->qp_timeout_jiffies = 0; /* Can't be set for UD/UC in modify_qp */
+ 	if (init->qp_type == IB_QPT_RC) {
++#ifdef HAVE_TIMER_SETUP
+ 		timer_setup(&qp->rnr_nak_timer, rnr_nak_timer, 0);
+ 		timer_setup(&qp->retrans_timer, retransmit_timer, 0);
++#else
++		setup_timer(&qp->rnr_nak_timer, rnr_nak_timer, (unsigned long)qp);
++		setup_timer(&qp->retrans_timer, retransmit_timer, (unsigned long)qp);
++#endif
+ 	}
+ 	return 0;
+ }

@@ -1,0 +1,24 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/hw/mlx5/mem.c
+
+Change-Id: I3b87767779a8d795ab6828d9c64d76188def988f
+---
+ drivers/infiniband/hw/mlx5/mem.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+--- a/drivers/infiniband/hw/mlx5/mem.c
++++ b/drivers/infiniband/hw/mlx5/mem.c
+@@ -241,9 +241,12 @@ static int test_wc_poll_cq(struct mlx5_i
+ 
+ static int test_wc_do_send(struct mlx5_ib_dev *dev, struct ib_qp *qp)
+ {
+-	struct ib_send_wr wr = { .opcode = MLX5_IB_WR_NOP, .wr_id = WR_ID_BF };
++	struct ib_send_wr wr = {};
+ 	int err, i;
+ 
++	wr.opcode = MLX5_IB_WR_NOP;
++	wr.wr_id = WR_ID_BF;
++
+ 	for (i = 0; i < TEST_WC_NUM_WQES; i++) {
+ 		if (i == TEST_WC_NUM_WQES - 1) {
+ 			wr.send_flags = IB_SEND_SIGNALED;

@@ -1,0 +1,27 @@
+From: Israel Rukshin <israelr@mellanox.com>
+Subject: [PATCH] BACKPORT: include/linux/nvme-rdma.h
+
+Change-Id: I6af4e33df3d6570289b811601ee7b30cc0514cc9
+---
+ include/linux/nvme-rdma.h | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+--- a/include/linux/nvme-rdma.h
++++ b/include/linux/nvme-rdma.h
+@@ -3,6 +3,11 @@
+  * Copyright (c) 2015 Mellanox Technologies. All rights reserved.
+  */
+ 
++/* build vs. Non-MLNX_OFED .h */
++#if 0
++#include_next <linux/nvme-rdma.h>
++#else
++
+ #ifndef _LINUX_NVME_RDMA_H
+ #define _LINUX_NVME_RDMA_H
+ 
+@@ -85,3 +90,4 @@ struct nvme_rdma_cm_rej {
+ };
+ 
+ #endif /* _LINUX_NVME_RDMA_H */
++#endif /* build vs. Non-MLNX_OFED .h */

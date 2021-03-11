@@ -1,0 +1,165 @@
+Content:
+1. Overview
+2. Directory structure
+3. HOWTO add a new feature patch(es)
+4. HOWTO add backport patches
+5. Check compilation
+6. Submitting to Gerrit
+
+
+Overview:
+---------
+The general idea is based on compat-wireless project https://lkml.org/lkml/2011/9/9/327
+Compat Wiki:
+https://backports.wiki.kernel.org/index.php/Main_Page
+https://backports.wiki.kernel.org/index.php/Documentation
+
+Also it utilizes autotools.
+
+Directory structure:
+--------------------
+MLNX_OFED-3.x (mlnx_rdma) git tree structure:
+Compat files:
+	compat/
+	include/linux/compat*.h
+	ofed_scripts/gen-compat-autoconf.sh
+	ofed_scripts/gen-compat-config.sh
+	include/linux/<headers to update existing headers by #include_next and adding new stuff>*.h
+
+Autotools:
+	compat/config
+	compat/autogen.sh
+	compat/configure.ac
+
+Feautes (Each feautre should be a separate directory):
+	features/<index for sorting patch apply order>-<feaure name>
+
+Backport patches:
+	backports/<one patch file for each module!>
+
+Kernel subtree based on upstream kernel:
+	include/
+	drivers/
+	net/
+
+---------------------
+
+Compilation procedure:
+
+# cd mlnx_rdma
+# git checkout master
+# ln -s ofed_scripts/configure
+# ln -s ofed_scripts/makefile
+# ln -s ofed_scripts/Makefile
+
+# ./configure <params>
+E.g.: ./configure --with-core-mod --with-user_mad-mod --with-user_access-mod --with-addr_trans-mod --with-mlx4-mod --with-mlx4_en-mod --with-mlx5-mod --with-ipoib-mod --with-srp-mod --with-rds-mod --with-iser-mod
+
+Note: If "backports_applied" file exist then backport patches will not be applied.
+
+# make distclean
+# make
+# make install
+
+HOWTO add a new feature/fix:
+----------------------------
+Start with updated branch (equal to “master”).
+
+Add the new code.
+Check compilation on the latest kernel base.
+# ./configure <params> --without-backport-patches
+
+Note: Provide path to kernel sources if needed: --kernel-version <version> --kernel-sources <path to sources>
+
+# make distclean
+# make
+# make install
+
+Check your feature.
+Commit the changes.
+Add backports if required.
+See "Check compilation".
+
+Note: Make sure your commits pass linux/scripts/checkpatch.pl
+      Backport patches may not pass this check
+
+
+HOWTO add backport patches:
+---------------------------
+Start with updated branch (eg: equal to “master”).
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!!! NOTE: BACKPORT PATCHES MAY CHANGE FILES UNDER FOLLOWING DIRECTORIES                                               !!!
+!!!			include/rdma/                                                                                 !!!
+!!!			include/linux/mlx4/                                                                           !!!
+!!!			include/linux/mlx5/                                                                           !!!
+!!!			drivers/                                                                                      !!!
+!!!			net/                                                                                          !!!
+!!!			AND SHOULD NOT TOUCH FILES UNDER ofed_scripts, compat and compat headers under include/linux/ !!!
+!!! CHANGES TO THE FILES UNDER ofed_scripts, compat and include/linux/compat*.h SHOULD BE COMMITTED DIRECTLY          !!!
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+$ ln -s ofed_scripts/configure
+$ ln -s ofed_scripts/makefile
+$ ln -s ofed_scripts/Makefile
+$ /bin/rm -f backports_applied
+
+Run configure (check parameters)
+$ ./configure --with-core-mod --with-user_mad-mod --with-user_access-mod --with-addr_trans-mod --with-mlx4-mod --with-mlx4_en-mod --with-mlx5-mod --with-ipoib-mod --with-srp-mod --with-rds-mod --with-iser-mod
+
+All backports are applied.
+
+$ make KBUILD_NOCMDDEP=1 2>&1 | tee log
+
+In case of undefined variable/function refer to:
+https://backports.wiki.kernel.org/index.php/Documentation/compat
+
+If some functionality was backported to some supported Distro need to add CONFIG_COMPAT_... flag (or even better, use autotools
+and define flags like HAVE_... see compat/config/rdma.m4):
+For example, "netdev_get_prio_tc_map" was added in 2.6.39 but backported to RHEL6.[23]
+ifeq ($(RHEL_MAJOR),6)
+ CFLAGS += -DCONFIG_COMPAT_IS_PRIO_TC_MAP
+ ...
+endif
+
+diff --git a/drivers/infiniband/core/cma.c b/drivers/infiniband/core/cma.c
+index 0bf5a9d..f0f75b6 100644
+--- a/drivers/infiniband/core/cma.c
++++ b/drivers/infiniband/core/cma.c
+@@ -1844,10 +1844,14 @@ static int cma_resolve_iboe_route(struct rdma_id_private *id_priv)
+        route->path_rec->reversible = 1;
+        route->path_rec->pkey = cpu_to_be16(0xffff);
+        route->path_rec->mtu_selector = IB_SA_EQ;
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,39)) || defined(CONFIG_COMPAT_IS_PRIO_TC_MAP)
+        route->path_rec->sl = netdev_get_prio_tc_map(
+                        ndev->priv_flags & IFF_802_1Q_VLAN ?
+                                vlan_dev_real_dev(ndev) : ndev,
+                        rt_tos2priority(id_priv->tos));
++#else
++       route->path_rec->sl = id_priv->tos >> 5;
++#endif
+
+Create a new backport patch from the diff above:
+1. Commit the change.
+2. Squash/Fixup the commit to the original commit that backported the relevant module (unless
+you are backporting a new module).
+3. Get updated/new patches:
+$ ./ofed_scripts/ofed_get_patches.sh
+Change branch to the original (E.g. “master”)
+Update/add new relevant patches under "backports" directory
+$ cp -a ./backports_new/0XXX-<new patch>.patch backports
+$ git add backports
+$ git commit -s -m ”BACKPORTS: Added RHEL6.[23] support” backports/
+
+
+Check compilation:
+------------------
+Use your user and not "root".
+$ cd /mswg/projects/art
+$ git_url=<git url> git_branch=<git branch> ./build mlnx_rdma
+
+
+Submitting to Gerrit:
+---------------------
+Please refer to
+http://wiki.lab.mtl.com/tiki/tiki-index.php?page=Code+Review&structure=OFED-LE#Gerrit

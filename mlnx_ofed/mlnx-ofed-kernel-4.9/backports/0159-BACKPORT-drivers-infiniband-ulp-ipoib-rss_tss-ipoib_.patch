@@ -1,0 +1,35 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/ulp/ipoib/rss_tss/ipoib_cm_rss.c
+
+Change-Id: I7d0e9834eafa5a527bbb79c733b402afbb8bda71
+---
+ drivers/infiniband/ulp/ipoib/rss_tss/ipoib_cm_rss.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+--- a/drivers/infiniband/ulp/ipoib/rss_tss/ipoib_cm_rss.c
++++ b/drivers/infiniband/ulp/ipoib/rss_tss/ipoib_cm_rss.c
+@@ -537,7 +537,11 @@ static struct ib_qp *ipoib_cm_create_tx_
+ 		.sq_sig_type		= IB_SIGNAL_ALL_WR,
+ 		.qp_type		= IB_QPT_RC,
+ 		.qp_context		= tx,
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 		.create_flags		= 0
++#else
++		.create_flags           = IB_QP_CREATE_USE_GFP_NOIO
++#endif
+ 	};
+ 	struct ib_qp *tx_qp;
+ 
+@@ -548,6 +552,12 @@ static struct ib_qp *ipoib_cm_create_tx_
+ 			min_t(u32, priv->ca->attrs.max_send_sge, MAX_SKB_FRAGS + 1);
+ 
+ 	tx_qp = ib_create_qp(priv->pd, &attr);
++#ifndef HAVE_MEMALLOC_NOIO_SAVE
++	if (PTR_ERR(tx_qp) == -EINVAL) {
++		attr.create_flags &= ~IB_QP_CREATE_USE_GFP_NOIO;
++		tx_qp = ib_create_qp(priv->pd, &attr);
++	}
++#endif
+ 	tx->max_send_sge = attr.cap.max_send_sge;
+ 	return tx_qp;
+ }

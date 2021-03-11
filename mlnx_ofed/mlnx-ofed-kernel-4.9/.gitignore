@@ -1,0 +1,109 @@
+#
+# NOTE! Don't add files that are generated in specific
+# subdirectories here. Add them in the ".gitignore" file
+# in that subdirectory instead.
+#
+# NOTE! Please use 'git ls-files -i --exclude-standard'
+# command after changing this file, to see if there are
+# any tracked files which get ignored after the change.
+#
+# Normal rules
+#
+.*
+*.o
+*.o.*
+*.a
+*.s
+*.ko
+*.ko.unsigned
+*.so
+*.so.dbg
+*.mod.c
+*.i
+*.lst
+*.symtypes
+*.order
+modules.builtin
+*.elf
+*.bin
+*.gz
+*.bz2
+*.lzma
+*.xz
+*.lzo
+#*.patch
+*.gcno
+
+#
+# Top-level generic files
+#
+/tags
+/TAGS
+/linux
+/vmlinux
+/vmlinuz
+/System.map
+/Module.markers
+/Module.symvers
+bp2/
+
+#
+# git files that we don't want to ignore even it they are dot-files
+#
+!.gitignore
+!.mailmap
+
+#
+# Generated include files
+#
+include/config
+include/linux/version.h
+include/generated
+arch/*/include/generated
+
+# stgit generated dirs
+patches-*
+
+# quilt's files
+patches
+series
+
+# cscope files
+cscope.*
+ncscope.*
+
+# gnu global files
+GPATH
+GRTAGS
+GSYMS
+GTAGS
+
+*.orig
+*~
+\#*#
+configure.mk.kernel
+compat.config
+include/linux/autoconf.h
+include/generated/autoconf.h
+include/linux/compat_autoconf.h
+configure
+makefile
+Makefile
+backports_applied
+openib.conf.tmp
+ofed_scripts/utils/build/
+
+# compat/autotools stauff
+compat/COPYING
+compat/Makefile.in
+compat/INSTALL
+compat/aclocal.m4
+compat/autom4te.cache/
+compat/confdefs.h
+compat/config.h.in
+compat/config.log
+compat/build/Module.symvers
+compat/build/output.log
+compat/config.h
+compat/config.status
+compat/stamp-h1

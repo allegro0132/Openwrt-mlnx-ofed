@@ -1,0 +1,142 @@
+From: Bodong Wang <bodong@mellanox.com>
+Subject: [PATCH] BACKPORT:
+ drivers/net/ethernet/mellanox/mlx5/core/en/tc_tun_vxlan.c
+
+Change-Id: I8de69f07fcf7f34fc0e895a4c86914670ea6dc37
+---
+ .../ethernet/mellanox/mlx5/core/en/tc_tun_vxlan.c  | 57 +++++++++++++++++++---
+ 1 file changed, 50 insertions(+), 7 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en/tc_tun_vxlan.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en/tc_tun_vxlan.c
+@@ -1,6 +1,8 @@
+ // SPDX-License-Identifier: GPL-2.0 OR Linux-OpenIB
+ /* Copyright (c) 2018 Mellanox Technologies. */
+ 
++#ifdef HAVE_TCF_TUNNEL_INFO
++
+ #include <net/vxlan.h>
+ #include "lib/vxlan.h"
+ #include "en/tc_tun.h"
+@@ -16,10 +18,19 @@ static int mlx5e_tc_tun_calc_hlen_vxlan(
+ }
+ 
+ static int mlx5e_tc_tun_check_udp_dport_vxlan(struct mlx5e_priv *priv,
+-					      struct tc_cls_flower_offload *f)
++					      struct tc_cls_flower_offload *f
++#ifndef HAVE_TC_SETUP_FLOW_ACTION
++					      , struct flow_rule *rule
++#endif
++					     )
++
+ {
++#ifdef HAVE_TC_SETUP_FLOW_ACTION
+ 	struct flow_rule *rule = tc_cls_flower_offload_flow_rule(f);
++#endif
++#ifdef HAVE_TC_CLS_OFFLOAD_EXTACK
+ 	struct netlink_ext_ack *extack = f->common.extack;
++#endif
+ 	struct flow_match_ports enc_ports;
+ 
+ 	if (!flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ENC_PORTS))
+@@ -31,8 +42,10 @@ static int mlx5e_tc_tun_check_udp_dport_
+ 
+ 	if (!mlx5_vxlan_lookup_port(priv->mdev->vxlan,
+ 				    be16_to_cpu(enc_ports.key->dst))) {
++#ifdef HAVE_TC_CLS_OFFLOAD_EXTACK
+ 		NL_SET_ERR_MSG_MOD(extack,
+ 				   "Matched UDP dst port is not registered as a VXLAN port");
++#endif
+ 		netdev_warn(priv->netdev,
+ 			    "UDP port %d is not registered as a VXLAN port\n",
+ 			    be16_to_cpu(enc_ports.key->dst));
+@@ -46,29 +59,47 @@ static int mlx5e_tc_tun_parse_udp_ports_
+ 					      struct mlx5_flow_spec *spec,
+ 					      struct tc_cls_flower_offload *f,
+ 					      void *headers_c,
+-					      void *headers_v)
++					      void *headers_v
++#ifndef HAVE_TC_SETUP_FLOW_ACTION
++					      , struct flow_rule *rule
++#endif
++					     )
++
+ {
+ 	int err = 0;
+ 
+-	err = mlx5e_tc_tun_parse_udp_ports(priv, spec, f, headers_c, headers_v);
++	err = mlx5e_tc_tun_parse_udp_ports(priv, spec, f, headers_c, headers_v
++#ifndef HAVE_TC_SETUP_FLOW_ACTION
++					   , rule
++#endif
++					   );
+ 	if (err)
+ 		return err;
+ 
+-	return mlx5e_tc_tun_check_udp_dport_vxlan(priv, f);
++	return mlx5e_tc_tun_check_udp_dport_vxlan(priv, f
++#ifndef HAVE_TC_SETUP_FLOW_ACTION
++						  , rule
++#endif
++						 );
+ }
+ 
+ static int mlx5e_tc_tun_init_encap_attr_vxlan(struct net_device *tunnel_dev,
+ 					      struct mlx5e_priv *priv,
+-					      struct mlx5e_encap_entry *e,
+-					      struct netlink_ext_ack *extack)
++					      struct mlx5e_encap_entry *e
++#ifdef HAVE_TC_CLS_OFFLOAD_EXTACK
++					      , struct netlink_ext_ack *extack
++#endif
++					     )
+ {
+ 	int dst_port = be16_to_cpu(e->tun_info->key.tp_dst);
+ 
+ 	e->tunnel = &vxlan_tunnel;
+ 
+ 	if (!mlx5_vxlan_lookup_port(priv->mdev->vxlan, dst_port)) {
++#ifdef HAVE_TC_CLS_OFFLOAD_EXTACK
+ 		NL_SET_ERR_MSG_MOD(extack,
+ 				   "vxlan udp dport was not registered with the HW");
++#endif
+ 		netdev_warn(priv->netdev,
+ 			    "%d isn't an offloaded vxlan udp dport\n",
+ 			    dst_port);
+@@ -102,10 +133,18 @@ static int mlx5e_tc_tun_parse_vxlan(stru
+ 				    struct mlx5_flow_spec *spec,
+ 				    struct tc_cls_flower_offload *f,
+ 				    void *headers_c,
+-				    void *headers_v)
++				    void *headers_v
++#ifndef HAVE_TC_SETUP_FLOW_ACTION
++				    , struct flow_rule *rule
++#endif
++						   )
+ {
++#ifdef HAVE_TC_SETUP_FLOW_ACTION
+ 	struct flow_rule *rule = tc_cls_flower_offload_flow_rule(f);
++#endif
++#ifdef HAVE_TC_CLS_OFFLOAD_EXTACK
+ 	struct netlink_ext_ack *extack = f->common.extack;
++#endif
+ 	struct flow_match_enc_keyid enc_keyid;
+ 	void *misc_c, *misc_v;
+ 
+@@ -124,8 +163,10 @@ static int mlx5e_tc_tun_parse_vxlan(stru
+ 
+ 	if (!MLX5_CAP_ESW_FLOWTABLE_FDB(priv->mdev,
+ 					ft_field_support.outer_vxlan_vni)) {
++#ifdef HAVE_TC_CLS_OFFLOAD_EXTACK
+ 		NL_SET_ERR_MSG_MOD(extack,
+ 				   "Matching on VXLAN VNI is not supported");
++#endif
+ 		netdev_warn(priv->netdev,
+ 			    "Matching on VXLAN VNI is not supported\n");
+ 		return -EOPNOTSUPP;
+@@ -149,3 +190,5 @@ struct mlx5e_tc_tunnel vxlan_tunnel = {
+ 	.parse_udp_ports      = mlx5e_tc_tun_parse_udp_ports_vxlan,
+ 	.parse_tunnel         = mlx5e_tc_tun_parse_vxlan,
+ };
++
++#endif /* HAVE_TCF_TUNNEL_INFO */

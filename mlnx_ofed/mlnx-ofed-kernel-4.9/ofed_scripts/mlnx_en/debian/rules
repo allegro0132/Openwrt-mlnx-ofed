@@ -1,0 +1,159 @@
+#!/usr/bin/make -f
+# -*- makefile -*-
+# Sample debian/rules that uses debhelper.
+# This file was originally written by Joey Hess and Craig Small.
+# As a special exception, when this file is copied by dh-make into a
+# dh-make output file, you may use that output file without restriction.
+# This special exception was added by Craig Small in version 0.37 of dh-make.
+#
+# This version is for a hypothetical package that can build a kernel modules
+# architecture-dependant package via make-kpkg, as well as an
+# architecture-independent module source package, and other packages
+# either dep/indep for things like common files or userspace components
+# needed for the kernel modules.
+
+# Uncomment this to turn on verbose mode.
+#export DH_VERBOSE=1
+
+MLX4 ?= 1
+MLX5 ?= 1
+MLXFW ?= 1
+WITH_DKMS ?= 1
+MLXNUMC = $(shell grep ^processor /proc/cpuinfo | wc -l)
+NJOBS ?= $(shell if [ $(MLXNUMC) -lt 16 ]; then echo $(MLXNUMC); else echo 16; fi)
+
+PYTHON = $(shell for i in "" 3 2; do if [ -x /usr/bin/python$$i ]; then echo python$$i; break; fi; done)
+
+MLNX_EN_PATCH_PARAMS ?=
+ifneq ($(MLX4),1)
+	MLNX_EN_PATCH_PARAMS = "$(MLNX_EN_PATCH_PARAMS) --without-mlx4"
+endif
+ifneq ($(MLX5),1)
+	MLNX_EN_PATCH_PARAMS = "$(MLNX_EN_PATCH_PARAMS) --without-mlx5"
+endif
+ifneq ($(MLXFW),1)
+	MLNX_EN_PATCH_PARAMS = "$(MLNX_EN_PATCH_PARAMS) --without-mlxfw"
+endif
+
+pname:=mlnx-en
+psource:=$(pname)
+ifeq ($(WITH_DKMS),1)
+pdkms:=$(pname)-dkms
+else
+pdkms:=$(pname)-modules
+endif
+putils:=$(pname)-utils
+
+pversion := $(shell dpkg-parsechangelog | sed -n 's/^Version: *\([^-]\+\)-.\+/\1/p')
+prel := $(shell dpkg-parsechangelog | sed -n 's/^Version: *\([^-]\+\)-\(.\+\)/\2/p')
+
+export INSTALL_MOD_DIR:=updates
+export INSTALL_MOD_PATH:=$(CURDIR)/debian/$(pdkms)
+
+DIST_NAME := $(shell lsb_release -si)
+DIST_RELEASE := $(DIST_NAME)/$(shell lsb_release -sc)
+kernelver ?= $(shell uname -r)
+kernelver1 = $(shell echo $(kernelver) | sed -e 's/_/-/g')
+kernel_source_dir ?= "/lib/modules/$(kernelver)/build"
+
+%:
+ifeq ($(WITH_DKMS),1)
+	dh $@ --with dkms
+else
+	dh $@
+endif
+
+override_dh_auto_clean:
+
+override_dh_auto_configure:
+	# backup clean sources
+	/bin/rm -rf source || true
+	mkdir -p source
+	ls -1 | grep -v source | xargs -iELEM cp ELEM -r source
+ifneq ($(WITH_DKMS),1)
+	@echo Building for $(kernelver)
+	find compat -type f -exec touch -t 200012201010 '{}' \; || true
+	$(CURDIR)/scripts/mlnx_en_patch.sh --kernel $(kernelver) --kernel-sources $(kernel_source_dir) $(MLNX_EN_PATCH_PARAMS) -j$(NJOBS)
+	make -j$(NJOBS)
+endif
+
+override_dh_auto_build:
+ifneq ($(WITH_DKMS),1)
+	make -j$(NJOBS)
+endif
+
+override_dh_auto_test:
+
+override_dh_auto_install:
+ifneq ($(WITH_DKMS),1)
+	make install_modules KSRC=$(kernel_source_dir) KVERSION=$(kernelver) INSTALL_MOD_DIR=$(INSTALL_MOD_DIR) INSTALL_MOD_PATH=$(INSTALL_MOD_PATH) KERNELRELEASE=$(kernelver)
+	find $(INSTALL_MOD_PATH) \( -type f -a -name "modules.*" \) -delete
+endif
+
+	# For dkms
+	dh_installdirs -p$(pdkms)	usr/src/$(pname)-$(pversion)
+
+	cp -a source/LICENSE		debian/$(pdkms)/usr/src/$(pname)-$(pversion)
+	cp -a source/COPYING		debian/$(pdkms)/usr/src/$(pname)-$(pversion)
+	cp -a source/makefile		debian/$(pdkms)/usr/src/$(pname)-$(pversion)
+	cp -a source/Makefile		debian/$(pdkms)/usr/src/$(pname)-$(pversion)
+	cp -a source/backports		debian/$(pdkms)/usr/src/$(pname)-$(pversion)
+	cp -a source/compat*		debian/$(pdkms)/usr/src/$(pname)-$(pversion)
+	with_mlx4=$(MLX4) with_mlx5=$(MLX5) with_mlxfw=$(MLXFW) $(CURDIR)/ofed_scripts/generate_mlnx_en_dkms_conf.sh > debian/$(pdkms)/usr/src/$(pname)-$(pversion)/dkms.conf
+	cp -a source/drivers		debian/$(pdkms)/usr/src/$(pname)-$(pversion)
+	cp -a source/block		debian/$(pdkms)/usr/src/$(pname)-$(pversion)
+	cp -a source/include		debian/$(pdkms)/usr/src/$(pname)-$(pversion)
+	cp -a source/ofed_scripts	debian/$(pdkms)/usr/src/$(pname)-$(pversion)
+	cp -a source/patches		debian/$(pdkms)/usr/src/$(pname)-$(pversion)
+	cp -a source/scripts		debian/$(pdkms)/usr/src/$(pname)-$(pversion)
+
+	# Force DKMS to install our modules.
+	# This is mostly needed for modules that do not have a version number info, as DKMS
+	# will compare their srcversion field, which does not really say which module is newer.
+ifeq ($(WITH_DKMS),1)
+	dh_installdirs -p$(pdkms)  usr/share/dkms/modules_to_force_install/
+	echo "$(pname)" > debian/$(pdkms)/usr/share/dkms/modules_to_force_install/$(pname).force
+endif
+
+	# For utils
+	dh_installdirs -p$(putils)  etc
+	dh_installdirs -p$(putils)  etc/modprobe.d
+	dh_installdirs -p$(putils)  etc/init
+	dh_installdirs -p$(putils)  etc/init.d
+	dh_installdirs -p$(putils)  sbin
+	dh_installdirs -p$(putils)  usr/sbin
+
+	install -m 0755 source/ofed_scripts/sysctl_perf_tuning		debian/$(putils)/sbin
+	install -m 0755 source/ofed_scripts/mlnx_bf_configure		debian/$(putils)/sbin
+	install -m 0755 source/ofed_scripts/mlnx-sf			debian/$(putils)/sbin
+	install -m 0755 source/ofed_scripts/mlnx-bf.conf		debian/$(putils)/etc/modprobe.d
+	install -m 0755 source/ofed_scripts/mlnx_tune			debian/$(putils)/usr/sbin
+	install -m 0755 source/ofed_scripts/show_gids			debian/$(putils)/usr/sbin
+	install -m 0755 source/ofed_scripts/compat_gid_gen			debian/$(putils)/usr/sbin
+	install -m 0755 source/ofed_scripts/cma_roce_mode			debian/$(putils)/usr/sbin
+	install -m 0755 source/ofed_scripts/cma_roce_tos			debian/$(putils)/usr/sbin
+	install -m 0755 source/ofed_scripts/*affinity*			debian/$(putils)/usr/sbin
+	install -m 0755 source/ofed_scripts/net-interfaces            debian/$(putils)/usr/sbin
+	install -m 0755 source/ofed_scripts/show_counters		debian/$(putils)/usr/sbin
+	install -m 0644 source/debian/mlnx-en.upstart			debian/$(putils)/etc/init/mlnx-en.conf
+	install -m 0755 source/scripts/mlnx-en.d_deb						debian/$(putils)/etc/init.d/mlnx-en.d
+	install -m 0644 source/scripts/mlnx-en.conf					debian/$(putils)/etc/mlnx-en.conf
+	with_mlx4=$(MLX4) with_mlx5=$(MLX5) with_mlxfw=$(MLXFW) $(CURDIR)/ofed_scripts/deb_mlnx_en_service_install_helper $(CURDIR)/debian/$(putils)
+
+	cd ofed_scripts/utils;	$(PYTHON) ./setup.py install --install-layout=deb --root=../../debian/$(putils)
+
+override_dh_installinit:
+
+
+ifneq ($(WITH_DKMS),1)
+override_dh_gencontrol:
+	dh_gencontrol -- -v$(pversion)-$(prel).kver.$(kernelver1)
+endif
+
+ifneq ($(MLNX_KO_NO_STRIP),1)
+ifneq ($(WITH_DKMS),1)
+override_dh_strip:
+	dh_strip
+	find debian -name '*.ko' | xargs strip -g
+endif
+endif

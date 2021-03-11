@@ -1,0 +1,69 @@
+From: Mikhael Goikhman <migo@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx5/core/en/health.c
+
+Change-Id: Ia25c5f21f10bb1c373e4e59a8f1f435bcf609983
+---
+ .../net/ethernet/mellanox/mlx5/core/en/health.c    | 14 +++++++++++++-
+ 1 file changed, 13 insertions(+), 1 deletion(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en/health.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en/health.c
+@@ -5,6 +5,7 @@
+ #include "lib/eq.h"
+ #include "lib/mlx5.h"
+ 
++#ifdef HAVE_DEVLINK_HEALTH_REPORT_SUPPORT
+ int mlx5e_reporter_named_obj_nest_start(struct devlink_fmsg *fmsg, char *name)
+ {
+ 	int err;
+@@ -96,6 +97,7 @@ int mlx5e_reporter_cq_common_diagnose(st
+ 
+ 	return 0;
+ }
++#endif /* HAVE_DEVLINK_HEALTH_REPORT_SUPPORT */
+ 
+ int mlx5e_health_create_reporters(struct mlx5e_priv *priv)
+ {
+@@ -120,12 +122,14 @@ void mlx5e_health_destroy_reporters(stru
+ 
+ void mlx5e_health_channels_update(struct mlx5e_priv *priv)
+ {
++#ifdef HAVE_DEVLINK_HEALTH_REPORTER_STATE_UPDATE
+ 	if (priv->tx_reporter)
+ 		devlink_health_reporter_state_update(priv->tx_reporter,
+ 						     DEVLINK_HEALTH_REPORTER_STATE_HEALTHY);
+ 	if (priv->rx_reporter)
+ 		devlink_health_reporter_state_update(priv->rx_reporter,
+ 						     DEVLINK_HEALTH_REPORTER_STATE_HEALTHY);
++#endif /* HAVE_DEVLINK_HEALTH_REPORTER_STATE_UPDATE */
+ }
+ 
+ int mlx5e_health_sq_to_ready(struct mlx5e_channel *channel, u32 sqn)
+@@ -198,14 +202,20 @@ int mlx5e_health_report(struct mlx5e_pri
+ 			struct devlink_health_reporter *reporter, char *err_str,
+ 			struct mlx5e_err_ctx *err_ctx)
+ {
+-	netdev_err(priv->netdev, err_str);
++	/* In kernels below 2.6.36, netdev_err required at least 3 params */
++	netdev_err(priv->netdev, "%s", err_str);
+ 
+ 	if (!reporter)
+ 		return err_ctx->recover(err_ctx->ctx);
+ 
++#ifdef HAVE_DEVLINK_HEALTH_REPORT_SUPPORT
+ 	return devlink_health_report(reporter, err_str, err_ctx);
++#else
++	return 0;
++#endif /* HAVE_DEVLINK_HEALTH_REPORT_SUPPORT */
+ }
+ 
++#ifdef HAVE_DEVLINK_HEALTH_REPORT_SUPPORT
+ #define MLX5_HEALTH_DEVLINK_MAX_SIZE 1024
+ static int mlx5e_health_rsc_fmsg_binary(struct devlink_fmsg *fmsg,
+ 					const void *value, u32 value_len)
+@@ -309,3 +319,5 @@ int mlx5e_health_queue_dump(struct mlx5e
+ 
+ 	return devlink_fmsg_obj_nest_end(fmsg);
+ }
++#endif /* HAVE_DEVLINK_HEALTH_REPORT_SUPPORT */
++

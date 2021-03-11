@@ -1,0 +1,95 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx4/mr.c
+
+Change-Id: If0600ca2d303422e5b88206a381e4f50f397f96b
+---
+ drivers/net/ethernet/mellanox/mlx4/mr.c | 32 ++++++++++++++++++++++++++++++++
+ 1 file changed, 32 insertions(+)
+
+--- a/drivers/net/ethernet/mellanox/mlx4/mr.c
++++ b/drivers/net/ethernet/mellanox/mlx4/mr.c
+@@ -480,14 +480,26 @@ static void mlx4_mpt_release(struct mlx4
+ 	__mlx4_mpt_release(dev, index);
+ }
+ 
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ int __mlx4_mpt_alloc_icm(struct mlx4_dev *dev, u32 index)
++#else
++int __mlx4_mpt_alloc_icm(struct mlx4_dev *dev, u32 index, gfp_t gfp)
++#endif
+ {
+ 	struct mlx4_mr_table *mr_table = &mlx4_priv(dev)->mr_table;
+ 
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 	return mlx4_table_get(dev, &mr_table->dmpt_table, index);
++#else
++	return mlx4_table_get(dev, &mr_table->dmpt_table, index, gfp);
++#endif
+ }
+ 
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ static int mlx4_mpt_alloc_icm(struct mlx4_dev *dev, u32 index)
++#else
++static int mlx4_mpt_alloc_icm(struct mlx4_dev *dev, u32 index, gfp_t gfp)
++#endif
+ {
+ 	u64 param = 0;
+ 
+@@ -498,7 +510,11 @@ static int mlx4_mpt_alloc_icm(struct mlx
+ 							MLX4_CMD_TIME_CLASS_A,
+ 							MLX4_CMD_WRAPPED);
+ 	}
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 	return __mlx4_mpt_alloc_icm(dev, index);
++#else
++	return __mlx4_mpt_alloc_icm(dev, index, gfp);
++#endif
+ }
+ 
+ void __mlx4_mpt_free_icm(struct mlx4_dev *dev, u32 index)
+@@ -630,7 +646,11 @@ int mlx4_mr_enable(struct mlx4_dev *dev,
+ 	struct mlx4_mpt_entry *mpt_entry;
+ 	int err;
+ 
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 	err = mlx4_mpt_alloc_icm(dev, key_to_hw_index(mr->key));
++#else
++	err = mlx4_mpt_alloc_icm(dev, key_to_hw_index(mr->key), GFP_KERNEL);
++#endif
+ 	if (err)
+ 		return err;
+ 
+@@ -788,13 +808,21 @@ int mlx4_write_mtt(struct mlx4_dev *dev,
+ EXPORT_SYMBOL_GPL(mlx4_write_mtt);
+ 
+ int mlx4_buf_write_mtt(struct mlx4_dev *dev, struct mlx4_mtt *mtt,
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 		       struct mlx4_buf *buf)
++#else
++		       struct mlx4_buf *buf, gfp_t gfp)
++#endif
+ {
+ 	u64 *page_list;
+ 	int err;
+ 	int i;
+ 
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 	page_list = kcalloc(buf->npages, sizeof(*page_list), GFP_KERNEL);
++#else
++	page_list = kcalloc(buf->npages, sizeof(*page_list), gfp);
++#endif
+ 	if (!page_list)
+ 		return -ENOMEM;
+ 
+@@ -841,7 +869,11 @@ int mlx4_mw_enable(struct mlx4_dev *dev,
+ 	struct mlx4_mpt_entry *mpt_entry;
+ 	int err;
+ 
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 	err = mlx4_mpt_alloc_icm(dev, key_to_hw_index(mw->key));
++#else
++	err = mlx4_mpt_alloc_icm(dev, key_to_hw_index(mw->key), GFP_KERNEL);
++#endif
+ 	if (err)
+ 		return err;
+ 

@@ -1,0 +1,113 @@
+From: Israel Rukshin <israelr@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/nvme/host/multipath.c
+
+Change-Id: Ie81b70d5e2a7ef05e97ca7f1bb43378ab0b20bca
+---
+ drivers/nvme/host/multipath.c | 39 +++++++++++++++++++++++++++++++++++
+ 1 file changed, 39 insertions(+)
+
+--- a/drivers/nvme/host/multipath.c
++++ b/drivers/nvme/host/multipath.c
+@@ -3,6 +3,8 @@
+  * Copyright (c) 2017-2018 Christoph Hellwig.
+  */
+ 
++#ifdef HAVE_BLK_TYPES_REQ_DRV
++
+ #include <linux/moduleparam.h>
+ #include <trace/events/block.h>
+ #include "nvme.h"
+@@ -366,7 +368,11 @@ int nvme_mpath_alloc_disk(struct nvme_ct
+ 	if (!(ctrl->subsys->cmic & (1 << 1)) || !multipath)
+ 		return 0;
+ 
++#ifdef HAVE_BLK_ALLOC_QUEUE_NODE_3_ARGS
++	q = blk_alloc_queue_node(GFP_KERNEL, NUMA_NO_NODE, NULL);
++#else
+ 	q = blk_alloc_queue_node(GFP_KERNEL, ctrl->numa_node);
++#endif
+ 	if (!q)
+ 		goto out;
+ 	q->queuedata = head;
+@@ -407,9 +413,19 @@ static void nvme_mpath_set_live(struct n
+ 	if (!head->disk)
+ 		return;
+ 
++#ifdef HAVE_DEVICE_ADD_DISK_3_ARGS
+ 	if (!(head->disk->flags & GENHD_FL_UP))
+ 		device_add_disk(&head->subsys->dev, head->disk,
+ 				nvme_ns_id_attr_groups);
++#else
++	if (!(head->disk->flags & GENHD_FL_UP)) {
++		device_add_disk(&head->subsys->dev, head->disk);
++		if (sysfs_create_group(&disk_to_dev(head->disk)->kobj,
++				&nvme_ns_id_attr_group))
++			dev_warn(&head->subsys->dev,
++				 "failed to create id group.\n");
++	}
++#endif
+ 
+ 	if (nvme_path_is_optimized(ns)) {
+ 		int node, srcu_idx;
+@@ -560,9 +576,15 @@ static void nvme_ana_work(struct work_st
+ 	nvme_read_ana_log(ctrl, false);
+ }
+ 
++#ifdef HAVE_TIMER_SETUP
+ static void nvme_anatt_timeout(struct timer_list *t)
+ {
+ 	struct nvme_ctrl *ctrl = from_timer(ctrl, t, anatt_timer);
++#else
++static void nvme_anatt_timeout(unsigned long data)
++{
++	struct nvme_ctrl *ctrl = (struct nvme_ctrl *)data;
++#endif
+ 
+ 	dev_info(ctrl->device, "ANATT timeout, resetting controller.\n");
+ 	nvme_reset_ctrl(ctrl);
+@@ -662,8 +684,16 @@ void nvme_mpath_remove_disk(struct nvme_
+ {
+ 	if (!head->disk)
+ 		return;
++#ifdef HAVE_DEVICE_ADD_DISK_3_ARGS
+ 	if (head->disk->flags & GENHD_FL_UP)
+ 		del_gendisk(head->disk);
++#else
++	if (head->disk->flags & GENHD_FL_UP) {
++		sysfs_remove_group(&disk_to_dev(head->disk)->kobj,
++				   &nvme_ns_id_attr_group);
++		del_gendisk(head->disk);
++	}
++#endif
+ 	blk_set_queue_dying(head->disk->queue);
+ 	/* make sure all pending bios are cleaned up */
+ 	kblockd_schedule_work(&head->requeue_work);
+@@ -686,7 +716,11 @@ int nvme_mpath_init(struct nvme_ctrl *ct
+ 	ctrl->anagrpmax = le32_to_cpu(id->anagrpmax);
+ 
+ 	mutex_init(&ctrl->ana_lock);
++#ifdef HAVE_TIMER_SETUP
+ 	timer_setup(&ctrl->anatt_timer, nvme_anatt_timeout, 0);
++#else
++	init_timer(&ctrl->anatt_timer);
++#endif
+ 	ctrl->ana_log_size = sizeof(struct nvme_ana_rsp_hdr) +
+ 		ctrl->nanagrpid * sizeof(struct nvme_ana_group_desc);
+ 	ctrl->ana_log_size += ctrl->max_namespaces * sizeof(__le32);
+@@ -701,6 +735,10 @@ int nvme_mpath_init(struct nvme_ctrl *ct
+ 	}
+ 
+ 	INIT_WORK(&ctrl->ana_work, nvme_ana_work);
++#ifndef HAVE_TIMER_SETUP
++	ctrl->anatt_timer.data = (unsigned long)ctrl;
++	ctrl->anatt_timer.function = nvme_anatt_timeout;
++#endif
+ 	ctrl->ana_log_buf = kmalloc(ctrl->ana_log_size, GFP_KERNEL);
+ 	if (!ctrl->ana_log_buf) {
+ 		error = -ENOMEM;
+@@ -723,4 +761,5 @@ void nvme_mpath_uninit(struct nvme_ctrl
+ 	kfree(ctrl->ana_log_buf);
+ 	ctrl->ana_log_buf = NULL;
+ }
++#endif /* HAVE_BLK_TYPES_REQ_DRV */
+ 

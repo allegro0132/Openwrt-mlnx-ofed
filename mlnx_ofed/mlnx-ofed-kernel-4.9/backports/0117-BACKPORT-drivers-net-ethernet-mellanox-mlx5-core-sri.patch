@@ -1,0 +1,86 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT:
+ drivers/net/ethernet/mellanox/mlx5/core/sriov_sysfs.c
+
+Change-Id: I99564b4857d0f87f08d2163e994d2871ebc4411b
+---
+ drivers/net/ethernet/mellanox/mlx5/core/sriov_sysfs.c | 19 +++++++++++++++++--
+ 1 file changed, 17 insertions(+), 2 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/sriov_sysfs.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/sriov_sysfs.c
+@@ -37,7 +37,9 @@
+ #include <linux/mlx5/vport.h>
+ #include <linux/mlx5/port.h>
+ #include "mlx5_core.h"
++#ifdef CONFIG_MLX5_ESWITCH
+ #include "eswitch.h"
++#endif
+ 
+ struct vf_attributes {
+ 	struct attribute attr;
+@@ -74,6 +76,7 @@ static ssize_t vf_attr_store(struct kobj
+ 	return ga->store(g, ga, buf, size);
+ }
+ 
++#ifdef CONFIG_MLX5_ESWITCH
+ struct vf_group_attributes {
+ 	struct attribute attr;
+ 	ssize_t (*show)(struct mlx5_vgroup *, struct vf_group_attributes *,
+@@ -160,7 +163,7 @@ static ssize_t min_tx_rate_group_store(s
+ 
+ 	return err ? err : count;
+ }
+-
++#endif
+ static ssize_t port_show(struct mlx5_sriov_vf *g, struct vf_attributes *oa,
+ 			 char *buf)
+ {
+@@ -919,15 +922,25 @@ static ssize_t num_vf_show(struct device
+ 
+ static DEVICE_ATTR(mlx5_num_vfs, 0600, num_vf_show, num_vf_store);
+ 
++#ifdef CONFIG_COMPAT_IS_CONST_KOBJECT_SYSFS_OPS
+ static const struct sysfs_ops vf_sysfs_ops = {
++#else
++static struct sysfs_ops vf_sysfs_ops = {
++#endif
+ 	.show = vf_attr_show,
+ 	.store = vf_attr_store,
+ };
+ 
++#ifdef CONFIG_MLX5_ESWITCH
++#ifdef CONFIG_COMPAT_IS_CONST_KOBJECT_SYSFS_OPS
+ static const struct sysfs_ops vf_group_sysfs_ops = {
++#else
++static struct sysfs_ops vf_group_sysfs_ops = {
++#endif
+ 	.show = vf_group_attr_show,
+ 	.store = vf_group_attr_store,
+ };
++#endif
+ 
+ #define VF_RATE_GROUP_ATTR(_name) struct vf_group_attributes vf_group_attr_##_name = \
+ 	__ATTR(_name, 0644, _name##_group_show, _name##_group_store)
+@@ -1053,7 +1066,9 @@ err_attr:
+ 		sriov->groups_config = NULL;
+ 	}
+ 
++#ifdef CONFIG_MLX5_ESWITCH
+ err_groups:
++#endif
+ 	kobject_put(sriov->config);
+ 	sriov->config = NULL;
+ 	return err;
+@@ -1077,10 +1092,10 @@ void mlx5_sriov_sysfs_cleanup(struct mlx
+ int mlx5_create_vf_group_sysfs(struct mlx5_core_dev *dev,
+ 			       u32 group_id, struct kobject *group_kobj)
+ {
++#ifdef CONFIG_MLX5_ESWITCH
+ 	struct mlx5_core_sriov *sriov = &dev->priv.sriov;
+ 	int err;
+ 
+-#ifdef CONFIG_MLX5_ESWITCH
+ 	err = kobject_init_and_add(group_kobj, &vf_group, sriov->groups_config,
+ 				   "%d", group_id);
+ 	if (err)

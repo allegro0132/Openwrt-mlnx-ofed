@@ -1,0 +1,29 @@
+From: Moshe Tal <moshet@mellanox.com>
+Subject: [PATCH] BACKPORT:
+ drivers/net/ethernet/mellanox/mlx5/core/fpga/ipsec.c
+
+Change-Id: I2ed399a81bbacd0f110c395f43b191bbabf1ec7c
+---
+ drivers/net/ethernet/mellanox/mlx5/core/fpga/ipsec.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/fpga/ipsec.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/fpga/ipsec.c
+@@ -88,10 +88,17 @@ static const struct rhashtable_params rh
+ 	 * value is not constant during the lifetime
+ 	 * of the key object.
+ 	 */
++#ifndef FIELD_SIZEOF
++	.key_len = sizeof_field(struct mlx5_fpga_ipsec_sa_ctx, hw_sa) -
++		   sizeof_field(struct mlx5_ifc_fpga_ipsec_sa_v1, cmd),
++	.key_offset = offsetof(struct mlx5_fpga_ipsec_sa_ctx, hw_sa) +
++		      sizeof_field(struct mlx5_ifc_fpga_ipsec_sa_v1, cmd),
++#else
+ 	.key_len = FIELD_SIZEOF(struct mlx5_fpga_ipsec_sa_ctx, hw_sa) -
+ 		   FIELD_SIZEOF(struct mlx5_ifc_fpga_ipsec_sa_v1, cmd),
+ 	.key_offset = offsetof(struct mlx5_fpga_ipsec_sa_ctx, hw_sa) +
+ 		      FIELD_SIZEOF(struct mlx5_ifc_fpga_ipsec_sa_v1, cmd),
++#endif
+ 	.head_offset = offsetof(struct mlx5_fpga_ipsec_sa_ctx, hash),
+ 	.automatic_shrinking = true,
+ 	.min_size = 1,

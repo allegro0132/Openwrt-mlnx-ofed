@@ -1,0 +1,237 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx5/core/pci_irq.c
+
+Change-Id: I4357f1536382d593df2ea8478e60cbf24b59a654
+---
+ drivers/net/ethernet/mellanox/mlx5/core/pci_irq.c | 114 +++++++++++++++++++++-
+ 1 file changed, 112 insertions(+), 2 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/pci_irq.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/pci_irq.c
+@@ -99,13 +99,23 @@ static void irq_set_name(char *name, int
+ 
+ static int request_irqs(struct mlx5_core_dev *dev, int nvec)
+ {
++#if defined(HAVE_IRQ_SET_AFFINITY_HINT) && !defined(HAVE_PCI_IRQ_API)
++	struct mlx5_priv *priv  = &dev->priv;
++#endif
+ 	char name[MLX5_MAX_IRQ_NAME];
+ 	int err;
+ 	int i;
+ 
+ 	for (i = 0; i < nvec; i++) {
+ 		struct mlx5_irq *irq = mlx5_irq_get(dev, i);
++#ifdef HAVE_IRQ_SET_AFFINITY_HINT
++#ifdef HAVE_PCI_IRQ_API
+ 		int irqn = pci_irq_vector(dev->pdev, i);
++#else
++		struct msix_entry *msix = priv->msix_arr;
++		int irqn                 = msix[i].vector;
++#endif
++#endif
+ 
+ 		irq_set_name(name, i);
+ 		ATOMIC_INIT_NOTIFIER_HEAD(&irq->nh);
+@@ -123,7 +133,14 @@ static int request_irqs(struct mlx5_core
+ err_request_irq:
+ 	for (; i >= 0; i--) {
+ 		struct mlx5_irq *irq = mlx5_irq_get(dev, i);
++#ifdef HAVE_IRQ_SET_AFFINITY_HINT
++#ifdef HAVE_PCI_IRQ_API
+ 		int irqn = pci_irq_vector(dev->pdev, i);
++#else
++		struct msix_entry *msix = priv->msix_arr;
++		int irqn                 = msix[i].vector;
++#endif
++#endif
+ 
+ 		free_irq(irqn, &irq->nh);
+ 	}
+@@ -174,8 +191,13 @@ static int irq_set_rmap(struct mlx5_core
+ 
+ 	vecidx = MLX5_IRQ_VEC_COMP_BASE;
+ 	for (; vecidx < irq_table->nvec; vecidx++) {
++#ifdef HAVE_PCI_IRQ_API
+ 		err = irq_cpu_rmap_add(irq_table->rmap,
+ 				       pci_irq_vector(mdev->pdev, vecidx));
++#else
++		err = irq_cpu_rmap_add(irq_table->rmap,
++				       mdev->priv.msix_arr[vecidx].vector);
++#endif
+ 		if (err) {
+ 			mlx5_core_err(mdev, "irq_cpu_rmap_add failed. err %d",
+ 				      err);
+@@ -195,12 +217,23 @@ err_out:
+ 
+ static int set_comp_irq_affinity_hint(struct mlx5_core_dev *mdev, int i)
+ {
++#if defined(HAVE_IRQ_SET_AFFINITY_HINT) && !defined(HAVE_PCI_IRQ_API)
++	struct mlx5_priv *priv  = &mdev->priv;
++	struct msix_entry *msix;
++#endif
+ 	int vecidx = MLX5_IRQ_VEC_COMP_BASE + i;
+ 	struct mlx5_irq *irq;
+ 	int irqn;
+ 
+ 	irq = mlx5_irq_get(mdev, vecidx);
+-	irqn = pci_irq_vector(mdev->pdev, vecidx);
++#ifdef HAVE_IRQ_SET_AFFINITY_HINT
++#ifdef HAVE_PCI_IRQ_API
++		irqn = pci_irq_vector(mdev->pdev, vecidx);
++#else
++		msix = priv->msix_arr;
++		irqn                 = msix[vecidx].vector;
++#endif
++#endif
+ 	if (!zalloc_cpumask_var(&irq->mask, GFP_KERNEL)) {
+ 		mlx5_core_warn(mdev, "zalloc_cpumask_var failed");
+ 		return -ENOMEM;
+@@ -218,12 +251,23 @@ static int set_comp_irq_affinity_hint(st
+ 
+ static void clear_comp_irq_affinity_hint(struct mlx5_core_dev *mdev, int i)
+ {
++#if defined(HAVE_IRQ_SET_AFFINITY_HINT) && !defined(HAVE_PCI_IRQ_API)
++	struct mlx5_priv *priv  = &mdev->priv;
++	struct msix_entry *msix;
++#endif
+ 	int vecidx = MLX5_IRQ_VEC_COMP_BASE + i;
+ 	struct mlx5_irq *irq;
+ 	int irqn;
+ 
+ 	irq = mlx5_irq_get(mdev, vecidx);
+-	irqn = pci_irq_vector(mdev->pdev, vecidx);
++#ifdef HAVE_IRQ_SET_AFFINITY_HINT
++#ifdef HAVE_PCI_IRQ_API
++		irqn = pci_irq_vector(mdev->pdev, vecidx);
++#else
++		msix = priv->msix_arr;
++		irqn                 = msix[vecidx].vector;
++#endif
++#endif
+ 	irq_set_affinity_hint(irqn, NULL);
+ 	free_cpumask_var(irq->mask);
+ }
+@@ -277,8 +321,13 @@ static void unrequest_irqs(struct mlx5_c
+ 	int i;
+ 
+ 	for (i = 0; i < table->nvec; i++)
++#ifdef HAVE_PCI_IRQ_API
+ 		free_irq(pci_irq_vector(dev->pdev, i),
+ 			 &mlx5_irq_get(dev, i)->nh);
++#else
++		free_irq(dev->priv.msix_arr[i].vector,
++			 &mlx5_irq_get(dev, i)->nh);
++#endif
+ }
+ 
+ int mlx5_irq_table_create(struct mlx5_core_dev *dev)
+@@ -291,6 +340,9 @@ int mlx5_irq_table_create(struct mlx5_co
+ 	int max_comp_eqs;
+ 	int nvec;
+ 	int err;
++#ifndef HAVE_PCI_IRQ_API
++	int i;
++#endif
+ 
+ 	if (mlx5_core_is_sf(dev))
+ 		return 0;
+@@ -303,9 +355,21 @@ int mlx5_irq_table_create(struct mlx5_co
+ 		return -ENOMEM;
+ 
+ 	table->irq = kcalloc(nvec, sizeof(*table->irq), GFP_KERNEL);
++#ifdef HAVE_PCI_IRQ_API
+ 	if (!table->irq)
+ 		return -ENOMEM;
++#else
++	priv->msix_arr = kcalloc(nvec, sizeof(*priv->msix_arr), GFP_KERNEL);
++	if (!priv->msix_arr || !table->irq) {
++		err = -ENOMEM;
++		goto err_free_irq;
++	}
+ 
++	for (i = 0; i < nvec; i++)
++		priv->msix_arr[i].entry = i;
++#endif
++
++#ifdef HAVE_PCI_IRQ_API
+ 	nvec = pci_alloc_irq_vectors(dev->pdev, MLX5_IRQ_VEC_COMP_BASE + 1,
+ 				     nvec, PCI_IRQ_MSIX);
+ 	if (nvec < 0) {
+@@ -314,6 +378,32 @@ int mlx5_irq_table_create(struct mlx5_co
+ 	}
+ 
+ 	table->nvec = nvec;
++#else /* HAVE_PCI_IRQ_API */
++#ifdef HAVE_PCI_ENABLE_MSIX_RANGE
++	nvec = pci_enable_msix_range(dev->pdev, priv->msix_arr,
++			MLX5_IRQ_VEC_COMP_BASE + 1, nvec);
++	if (nvec < 0) {
++		err = nvec;
++		goto err_free_irq;
++	}
++
++	table->nvec = nvec;
++#else /* HAVE_PCI_ENABLE_MSIX_RANGE */
++retry:
++	table->nvec = nvec;
++	err = pci_enable_msix(dev->pdev, priv->msix_arr, nvec);
++	if (err < 0) {
++		goto err_free_irq;
++	} else if (err > 2) {
++		nvec = err;
++		goto retry;
++	} else if (err) {
++		mlx5_core_err(dev, "Can't enable the minimum required num of MSIX, %d\n", err);
++		goto err_free_irq;
++	}
++	mlx5_core_dbg(dev, "received %d MSI vectors out of %d requested\n", err, nvec);
++#endif /* HAVE_PCI_ENABLE_MSIX_RANGE */
++#endif /* HAVE_PCI_IRQ_API */
+ 
+ 	err = irq_set_rmap(dev);
+ 	if (err)
+@@ -336,15 +426,25 @@ err_set_affinity:
+ err_request_irqs:
+ 	irq_clear_rmap(dev);
+ err_set_rmap:
++#ifdef HAVE_PCI_IRQ_API
+ 	pci_free_irq_vectors(dev->pdev);
++#else
++	pci_disable_msix(dev->pdev);
++#endif
+ err_free_irq:
+ 	kfree(table->irq);
++#ifndef HAVE_PCI_IRQ_API
++	kfree(priv->msix_arr);
++#endif
+ 	return err;
+ }
+ 
+ void mlx5_irq_table_destroy(struct mlx5_core_dev *dev)
+ {
+ 	struct mlx5_irq_table *table = dev->priv.irq_table;
++#ifndef HAVE_PCI_IRQ_API
++	struct mlx5_priv *priv  = &dev->priv;
++#endif
+ 	int i;
+ 
+ 	if (mlx5_core_is_sf(dev))
+@@ -357,8 +457,18 @@ void mlx5_irq_table_destroy(struct mlx5_
+ 	irq_clear_rmap(dev);
+ 	clear_comp_irqs_affinity_hints(dev);
+ 	for (i = 0; i < table->nvec; i++)
++#ifdef HAVE_PCI_IRQ_API
+ 		free_irq(pci_irq_vector(dev->pdev, i),
+ 			 &mlx5_irq_get(dev, i)->nh);
++#else
++		free_irq(dev->priv.msix_arr[i].vector,
++			 &mlx5_irq_get(dev, i)->nh);
++#endif
++#ifdef HAVE_PCI_IRQ_API
+ 	pci_free_irq_vectors(dev->pdev);
++#else
++	pci_disable_msix(dev->pdev);
++	kfree(priv->msix_arr);
++#endif
+ 	kfree(table->irq);
+ }

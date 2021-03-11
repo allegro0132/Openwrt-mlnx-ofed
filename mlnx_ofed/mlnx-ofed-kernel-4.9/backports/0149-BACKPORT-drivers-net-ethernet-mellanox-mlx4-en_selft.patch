@@ -1,0 +1,21 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx4/en_selftest.c
+
+Change-Id: I93fe219bdb15eac6ec2a2d65f03f1628808c18cd
+---
+ drivers/net/ethernet/mellanox/mlx4/en_selftest.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx4/en_selftest.c
++++ b/drivers/net/ethernet/mellanox/mlx4/en_selftest.c
+@@ -63,8 +63,8 @@ static int mlx4_en_test_loopback_xmit(st
+ 
+ 	skb_reserve(skb, NET_IP_ALIGN);
+ 
+-	ethh = skb_put(skb, sizeof(struct ethhdr));
+-	packet = skb_put(skb, packet_size);
++	ethh = (struct ethhdr *)skb_put(skb, sizeof(struct ethhdr));
++	packet = (unsigned char *)skb_put(skb, packet_size);
+ 	memcpy(ethh->h_dest, priv->dev->dev_addr, ETH_ALEN);
+ 	eth_zero_addr(ethh->h_source);
+ 	ethh->h_proto = htons(ETH_P_ARP);

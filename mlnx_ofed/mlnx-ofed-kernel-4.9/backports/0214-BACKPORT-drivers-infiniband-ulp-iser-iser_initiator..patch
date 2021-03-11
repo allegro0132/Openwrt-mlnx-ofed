@@ -1,0 +1,175 @@
+From: Sergey Gorenko <sergeygo@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/ulp/iser/iser_initiator.c
+
+Change-Id: Iddde317e2aaea8876d559d7bc63ace90463cc130
+---
+ drivers/infiniband/ulp/iser/iser_initiator.c | 97 ++++++++++++++++++--
+ 1 file changed, 89 insertions(+), 8 deletions(-)
+
+--- a/drivers/infiniband/ulp/iser/iser_initiator.c
++++ b/drivers/infiniband/ulp/iser/iser_initiator.c
+@@ -37,7 +37,9 @@
+ #include <linux/kfifo.h>
+ #include <scsi/scsi_cmnd.h>
+ #include <scsi/scsi_host.h>
+-
++#ifndef HAVE_ISCSI_TRANSPORT_CHECK_PROTECTION
++#include <scsi/scsi_eh.h>
++#endif
+ #include "iscsi_iser.h"
+ 
+ /* Register user buffer memory and initialize passive rdma
+@@ -324,7 +326,9 @@ static int iser_post_rx_bufs(struct iscs
+ {
+ 	struct iser_conn *iser_conn = conn->dd_data;
+ 	struct ib_conn *ib_conn = &iser_conn->ib_conn;
++#ifdef HAVE_ISCSI_DISCOVERY_SESSION
+ 	struct iscsi_session *session = conn->session;
++#endif
+ 
+ 	iser_dbg("req op %x flags %x\n", req->opcode, req->flags);
+ 	/* check if this is the last login - going to full feature phase */
+@@ -337,13 +341,14 @@ static int iser_post_rx_bufs(struct iscs
+ 	 */
+ 	WARN_ON(ib_conn->post_recv_buf_count != 1);
+ 
++#ifdef HAVE_ISCSI_DISCOVERY_SESSION
+ 	if (session->discovery_sess) {
+ 		iser_info("Discovery session, re-using login RX buffer\n");
+ 		return 0;
+ 	} else
+ 		iser_info("Normal session, posting batch of RX %d buffers\n",
+ 			  iser_conn->min_posted_rx);
+-
++#endif
+ 	/* Initial post receive buffers */
+ 	if (iser_post_recvm(iser_conn, iser_conn->min_posted_rx))
+ 		return -ENOMEM;
+@@ -367,7 +372,11 @@ int iser_send_command(struct iscsi_conn
+ 	unsigned long edtl;
+ 	int err;
+ 	struct iser_data_buf *data_buf, *prot_buf;
++#ifdef HAVE_ISCSI_CMD
++	struct iscsi_cmd *hdr = (struct iscsi_cmd *)task->hdr;
++#else
+ 	struct iscsi_scsi_req *hdr = (struct iscsi_scsi_req *)task->hdr;
++#endif
+ 	struct scsi_cmnd *sc  =  task->sc;
+ 	struct iser_tx_desc *tx_desc = &iser_task->desc;
+ 	u8 sig_count = ++iser_conn->ib_conn.sig_count;
+@@ -646,6 +655,45 @@ iser_check_remote_inv(struct iser_conn *
+ 	return 0;
+ }
+ 
++#ifndef HAVE_ISCSI_TRANSPORT_CHECK_PROTECTION
++static void iser_check_protection(struct iscsi_conn *conn,
++                                  struct iscsi_hdr *hdr)
++{
++        struct iscsi_task *task;
++        struct iscsi_iser_task *iser_task;
++        struct scsi_cmnd *sc;
++        enum iser_data_dir dir;
++        sector_t sector;
++        u8 ascq;
++
++#ifndef CONFIG_COMPAT_ISCSI_SESSION_FRWD_LOCK
++        spin_lock(&conn->session->lock);
++        task = iscsi_itt_to_ctask(conn, hdr->itt);
++        spin_unlock(&conn->session->lock);
++#else
++        spin_lock(&conn->session->back_lock);
++        task = iscsi_itt_to_ctask(conn, hdr->itt);
++        spin_unlock(&conn->session->back_lock);
++#endif
++        sc = task->sc;
++        iser_task = task->dd_data;
++
++        dir = iser_task->dir[ISER_DIR_IN] ? ISER_DIR_IN : ISER_DIR_OUT;
++        ascq = iser_check_task_pi_status(iser_task, dir, &sector);
++        if (ascq) {
++                sc->result = DRIVER_SENSE << 24 | DID_ABORT << 16 |
++                             SAM_STAT_CHECK_CONDITION;
++                scsi_build_sense_buffer(1, sc->sense_buffer,
++                                        ILLEGAL_REQUEST, 0x10, ascq);
++                sc->sense_buffer[7] = 0xc; /* Additional sense length */
++                sc->sense_buffer[8] = 0;   /* Information desc type */
++                sc->sense_buffer[9] = 0xa; /* Additional desc length */
++                sc->sense_buffer[10] = 0x80; /* Validity bit */
++
++                put_unaligned_be64(sector, &sc->sense_buffer[12]);
++        }
++}
++#endif
+ 
+ void iser_task_rsp(struct ib_cq *cq, struct ib_wc *wc)
+ {
+@@ -671,6 +719,12 @@ void iser_task_rsp(struct ib_cq *cq, str
+ 	iser_dbg("op 0x%x itt 0x%x dlen %d\n", hdr->opcode,
+ 		 hdr->itt, length);
+ 
++#ifndef HAVE_ISCSI_TRANSPORT_CHECK_PROTECTION
++        if (hdr->opcode == ISCSI_OP_SCSI_CMD_RSP &&
++            ib_conn->pi_support)
++		iser_check_protection(iser_conn->iscsi_conn, hdr);
++#endif
++
+ 	if (iser_check_remote_inv(iser_conn, wc, hdr)) {
+ 		iscsi_conn_failure(iser_conn->iscsi_conn,
+ 				   ISCSI_ERR_CONN_FAILED);
+@@ -761,12 +815,27 @@ void iser_task_rdma_init(struct iscsi_is
+ void iser_task_rdma_finalize(struct iscsi_iser_task *iser_task)
+ {
+ 	int prot_count = scsi_prot_sg_count(iser_task->sc);
++#ifndef HAVE_BLK_QUEUE_VIRT_BOUNDARY
++	bool is_rdma_data_aligned;
++#endif
+ 
+ 	if (iser_task->dir[ISER_DIR_IN]) {
++#ifndef HAVE_BLK_QUEUE_VIRT_BOUNDARY
++		is_rdma_data_aligned = true;
++		if (iser_task->data[ISER_DIR_IN].orig_sg) {
++			iser_finalize_rdma_unaligned_sg(iser_task,
++							&iser_task->data[ISER_DIR_IN],
++							ISER_DIR_IN);
++			is_rdma_data_aligned = false;
++		}
++#endif
+ 		iser_unreg_rdma_mem(iser_task, ISER_DIR_IN);
+-		iser_dma_unmap_task_data(iser_task,
+-					 &iser_task->data[ISER_DIR_IN],
+-					 DMA_FROM_DEVICE);
++#ifndef HAVE_BLK_QUEUE_VIRT_BOUNDARY
++		if (is_rdma_data_aligned)
++#endif
++			iser_dma_unmap_task_data(iser_task,
++						 &iser_task->data[ISER_DIR_IN],
++						 DMA_FROM_DEVICE);
+ 		if (prot_count)
+ 			iser_dma_unmap_task_data(iser_task,
+ 						 &iser_task->prot[ISER_DIR_IN],
+@@ -774,10 +843,22 @@ void iser_task_rdma_finalize(struct iscs
+ 	}
+ 
+ 	if (iser_task->dir[ISER_DIR_OUT]) {
++#ifndef HAVE_BLK_QUEUE_VIRT_BOUNDARY
++		is_rdma_data_aligned = true;
++		if (iser_task->data[ISER_DIR_OUT].orig_sg) {
++			iser_finalize_rdma_unaligned_sg(iser_task,
++							&iser_task->data[ISER_DIR_OUT],
++							ISER_DIR_OUT);
++			is_rdma_data_aligned = false;
++		}
++#endif
+ 		iser_unreg_rdma_mem(iser_task, ISER_DIR_OUT);
+-		iser_dma_unmap_task_data(iser_task,
+-					 &iser_task->data[ISER_DIR_OUT],
+-					 DMA_TO_DEVICE);
++#ifndef HAVE_BLK_QUEUE_VIRT_BOUNDARY
++		if (is_rdma_data_aligned)
++#endif
++			iser_dma_unmap_task_data(iser_task,
++						 &iser_task->data[ISER_DIR_OUT],
++						 DMA_TO_DEVICE);
+ 		if (prot_count)
+ 			iser_dma_unmap_task_data(iser_task,
+ 						 &iser_task->prot[ISER_DIR_OUT],

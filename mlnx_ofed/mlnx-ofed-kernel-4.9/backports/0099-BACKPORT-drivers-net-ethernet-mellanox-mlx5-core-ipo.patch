@@ -1,0 +1,101 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT:
+ drivers/net/ethernet/mellanox/mlx5/core/ipoib/ipoib_vlan.c
+
+Change-Id: I7d37649c73b876a2223e40dce5a71a230f5cf39c
+---
+ .../ethernet/mellanox/mlx5/core/ipoib/ipoib_vlan.c | 44 +++++++++++++++++++++-
+ 1 file changed, 43 insertions(+), 1 deletion(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/ipoib/ipoib_vlan.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/ipoib/ipoib_vlan.c
+@@ -73,8 +73,9 @@ static struct qpn_to_netdev *mlx5i_find_
+ {
+ 	struct hlist_head *h = &buckets[hash_32(qpn, MLX5I_MAX_LOG_PKEY_SUP)];
+ 	struct qpn_to_netdev *node;
++	COMPAT_HL_NODE
+ 
+-	hlist_for_each_entry(node, h, hlist) {
++	compat_hlist_for_each_entry(node, h, hlist) {
+ 		if (node->underlay_qpn == qpn)
+ 			return node;
+ 	}
+@@ -146,11 +147,20 @@ static const struct net_device_ops mlx5i
+ 	.ndo_open                = mlx5i_pkey_open,
+ 	.ndo_stop                = mlx5i_pkey_close,
+ 	.ndo_init                = mlx5i_pkey_dev_init,
++#if defined(HAVE_NDO_GET_STATS64) || defined(HAVE_NDO_GET_STATS64_RET_VOID)
+ 	.ndo_get_stats64         = mlx5i_get_stats,
++#endif
+ 	.ndo_uninit              = mlx5i_pkey_dev_cleanup,
++#ifndef HAVE_NDO_CHANGE_MTU_RH74
+ 	.ndo_change_mtu          = mlx5i_pkey_change_mtu,
++#else
++	.ndo_change_mtu_rh74     = mlx5i_pkey_change_mtu,
++#endif
+ 	.ndo_do_ioctl            = mlx5i_pkey_ioctl,
+ 	.ndo_tx_timeout          = mlx5i_tx_timeout,
++#ifdef HAVE_NET_DEVICE_OPS_EXTENDED
++	.ndo_size = sizeof(struct net_device_ops),
++#endif
+ };
+ 
+ /* Child NDOs */
+@@ -159,13 +169,32 @@ static int mlx5i_pkey_dev_init(struct ne
+ 	struct mlx5e_priv *priv = mlx5i_epriv(dev);
+ 	struct mlx5i_priv *ipriv, *parent_ipriv;
+ 	struct net_device *parent_dev;
++#ifdef HAVE_NDO_GET_IFLINK
+ 	int parent_ifindex;
++#else
++	char parent_name[IFNAMSIZ];
++	int i = 0;
++#endif
+ 
+ 	ipriv = priv->ppriv;
+ 
+ 	/* Get QPN to netdevice hash table from parent */
++#ifdef HAVE_NDO_GET_IFLINK
+ 	parent_ifindex = dev->netdev_ops->ndo_get_iflink(dev);
+ 	parent_dev = dev_get_by_index(dev_net(dev), parent_ifindex);
++#else
++	strcpy(parent_name, dev->name);
++	while (i < strlen(dev->name)) {
++		if (parent_name[i] == '.') {
++			parent_name[i] = 0;
++			break;
++		}
++		i++;
++	}
++	if (i == strlen(dev->name))
++		return -EINVAL;
++	parent_dev = dev_get_by_name(dev_net(dev), parent_name);
++#endif
+ 	if (!parent_dev) {
+ 		mlx5_core_warn(priv->mdev, "failed to get parent device\n");
+ 		return -EINVAL;
+@@ -288,11 +317,24 @@ static int mlx5i_pkey_init(struct mlx5_c
+ 	if (err)
+ 		return err;
+ 
++#ifdef CONFIG_COMPAT_LRO_ENABLED_IPOIB
++       netdev->features &= ~NETIF_F_LRO;
++#ifdef HAVE_NETDEV_HW_FEATURES
++       priv->netdev->hw_features &= ~NETIF_F_LRO;
++       priv->netdev->wanted_features &= ~NETIF_F_LRO;
++#endif
++#endif
++
+ 	/* Override parent ndo */
+ 	netdev->netdev_ops = &mlx5i_pkey_netdev_ops;
+ 
+ 	/* Set child limited ethtool support */
++#ifndef HAVE_ETHTOOL_OPS_EXT
+ 	netdev->ethtool_ops = &mlx5i_pkey_ethtool_ops;
++#else
++	SET_ETHTOOL_OPS(netdev, &mlx5i_pkey_ethtool_ops);
++	set_ethtool_ops_ext(netdev, &mlx5i_pkey_ethtool_ops_ext);
++#endif
+ 
+ 	/* Use dummy rqs */
+ 	priv->channels.params.log_rq_mtu_frames = MLX5E_PARAMS_MINIMUM_LOG_RQ_SIZE;

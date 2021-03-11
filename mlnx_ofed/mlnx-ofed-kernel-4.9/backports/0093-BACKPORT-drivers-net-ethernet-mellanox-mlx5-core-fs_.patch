@@ -1,0 +1,60 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx5/core/fs_core.h
+
+Change-Id: I1047f3e0a5c5648636d4f4699cbf55dddc414801
+---
+ drivers/net/ethernet/mellanox/mlx5/core/fs_core.h | 16 +++++++++++++++-
+ 1 file changed, 15 insertions(+), 1 deletion(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/fs_core.h
++++ b/drivers/net/ethernet/mellanox/mlx5/core/fs_core.h
+@@ -121,6 +121,10 @@ struct mlx5_flow_steering {
+ 	struct mlx5_flow_root_namespace	*sniffer_rx_root_ns;
+ 	struct mlx5_flow_root_namespace	*rdma_rx_root_ns;
+ 	struct mlx5_flow_root_namespace	*egress_root_ns;
++#if (LINUX_VERSION_CODE <= KERNEL_VERSION(3,6,11))
++	char *ftes_cache_name;
++	char *fgs_cache_name;
++#endif
+ };
+ 
+ struct fs_node {
+@@ -181,7 +185,11 @@ struct mlx5_flow_table {
+ 	/* FWD rules that point on this flow table */
+ 	struct list_head		fwd_rules;
+ 	u32				flags;
+-	struct rhltable			fgs_hash;
++#if !defined(HAVE_RHLTABLE) && defined(HAVE_NETNS_FRAGS_RHASHTABLE)
++	struct bp_rhltable		fgs_hash;
++#else
++ 	struct rhltable			fgs_hash;
++#endif
+ 	struct fs_debugfs_ft		debugfs;
+ 	enum mlx5_flow_table_miss_action def_miss_action;
+ };
+@@ -259,7 +267,11 @@ struct mlx5_flow_group {
+ 	struct ida			fte_allocator;
+ 	u32				id;
+ 	struct rhashtable		ftes_hash;
++#if !defined(HAVE_RHLTABLE) && defined(HAVE_NETNS_FRAGS_RHASHTABLE)
++	struct bp_rhlist_head		hash;
++#else
+ 	struct rhlist_head		hash;
++#endif
+ 	struct fs_debugfs_fg		debugfs;
+ };
+ 
+@@ -278,11 +290,13 @@ struct mlx5_flow_root_namespace {
+ 
+ int mlx5_init_fc_stats(struct mlx5_core_dev *dev);
+ void mlx5_cleanup_fc_stats(struct mlx5_core_dev *dev);
++#ifdef HAVE_TCF_TUNNEL_INFO
+ void mlx5_fc_queue_stats_work(struct mlx5_core_dev *dev,
+ 			      struct delayed_work *dwork,
+ 			      unsigned long delay);
+ void mlx5_fc_update_sampling_interval(struct mlx5_core_dev *dev,
+ 				      unsigned long interval);
++#endif
+ 
+ struct rule_client_data {
+ 	struct notifier_block *nb;

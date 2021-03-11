@@ -1,0 +1,82 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: include/linux/mlx4/device.h
+
+Change-Id: If1cf5aa8ca3f37c05b83dd549b884da13701fd9e
+---
+ include/linux/mlx4/device.h | 24 ++++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+--- a/include/linux/mlx4/device.h
++++ b/include/linux/mlx4/device.h
+@@ -37,12 +37,18 @@
+ #include <linux/pci.h>
+ #include <linux/completion.h>
+ #include <linux/radix-tree.h>
++#ifdef HAVE_NETDEV_RX_CPU_RMAP
+ #include <linux/cpu_rmap.h>
++#endif
+ #include <linux/crash_dump.h>
+ 
+ #include <linux/refcount.h>
+ 
++#ifdef HAVE_TIMECOUNTER_H
+ #include <linux/timecounter.h>
++#else
++#include <linux/clocksource.h>
++#endif
+ 
+ #define DEFAULT_UAR_PAGE_SHIFT  12
+ 
+@@ -1270,7 +1276,11 @@ static inline int mlx4_is_eth(struct mlx
+ }
+ 
+ int mlx4_buf_alloc(struct mlx4_dev *dev, int size, int max_direct,
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 		   struct mlx4_buf *buf);
++#else
++		   struct mlx4_buf *buf, gfp_t gfp);
++#endif
+ void mlx4_buf_free(struct mlx4_dev *dev, int size, struct mlx4_buf *buf);
+ static inline void *mlx4_buf_offset(struct mlx4_buf *buf, int offset)
+ {
+@@ -1307,9 +1317,17 @@ int mlx4_mw_enable(struct mlx4_dev *dev,
+ int mlx4_write_mtt(struct mlx4_dev *dev, struct mlx4_mtt *mtt,
+ 		   int start_index, int npages, u64 *page_list);
+ int mlx4_buf_write_mtt(struct mlx4_dev *dev, struct mlx4_mtt *mtt,
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 		       struct mlx4_buf *buf);
++#else
++		       struct mlx4_buf *buf, gfp_t gfp);
++#endif
+ 
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ int mlx4_db_alloc(struct mlx4_dev *dev, struct mlx4_db *db, int order);
++#else
++int mlx4_db_alloc(struct mlx4_dev *dev, struct mlx4_db *db, int order, gfp_t gfp);
++#endif
+ void mlx4_db_free(struct mlx4_dev *dev, struct mlx4_db *db);
+ 
+ int mlx4_alloc_hwq_res(struct mlx4_dev *dev, struct mlx4_hwq_resources *wqres,
+@@ -1326,7 +1344,11 @@ int mlx4_qp_reserve_range(struct mlx4_de
+ 			  int *base, u8 flags, u8 usage);
+ void mlx4_qp_release_range(struct mlx4_dev *dev, int base_qpn, int cnt);
+ 
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ int mlx4_qp_alloc(struct mlx4_dev *dev, int qpn, struct mlx4_qp *qp);
++#else
++int mlx4_qp_alloc(struct mlx4_dev *dev, int qpn, struct mlx4_qp *qp, gfp_t gfp);
++#endif
+ void mlx4_qp_free(struct mlx4_dev *dev, struct mlx4_qp *qp);
+ 
+ int mlx4_srq_alloc(struct mlx4_dev *dev, u32 pdn, u32 cqn, u16 xrcdn,
+@@ -1598,8 +1620,10 @@ int mlx4_SET_PORT_disable_mc_loopback(st
+ 				      bool disable_mc_loopback);
+ int set_phv_bit(struct mlx4_dev *dev, u8 port, int new_val);
+ int get_phv_bit(struct mlx4_dev *dev, u8 port, int *phv);
++#ifdef HAVE_NETIF_F_HW_VLAN_STAG_RX
+ int mlx4_get_is_vlan_offload_disabled(struct mlx4_dev *dev, u8 port,
+ 				      bool *vlan_offload_disabled);
++#endif
+ void mlx4_handle_eth_header_mcast_prio(struct mlx4_net_trans_rule_hw_ctrl *ctrl,
+ 				       struct _rule_hw *eth_header);
+ int mlx4_find_cached_mac(struct mlx4_dev *dev, u8 port, u64 mac, int *idx);

@@ -1,0 +1,50 @@
+From: Moshe Tal <moshet@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/hw/mlx5/odp_exp.c
+
+Change-Id: I7be5b918b01d4d4666f55db004b925e4c3962a5d
+---
+ drivers/infiniband/hw/mlx5/odp_exp.c | 26 ++++++++++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+
+--- a/drivers/infiniband/hw/mlx5/odp_exp.c
++++ b/drivers/infiniband/hw/mlx5/odp_exp.c
+@@ -166,6 +166,31 @@ int mlx5_ib_exp_odp_init_one(struct mlx5
+ 	if (!ibdev->odp_stats.odp_debugfs)
+ 		return -ENOMEM;
+ 
++#ifndef HAVE_DEBUGFS_CREATE_U8_RET_STRUCT
++	debugfs_create_atomic_t("num_odp_mrs", 0400,
++				ibdev->odp_stats.odp_debugfs,
++				&ibdev->odp_stats.num_odp_mrs);
++
++	debugfs_create_atomic_t("num_odp_mr_pages", 0400,
++				ibdev->odp_stats.odp_debugfs,
++				&ibdev->odp_stats.num_odp_mr_pages);
++
++	debugfs_create_atomic_t("num_mrs_not_found", 0400,
++				ibdev->odp_stats.odp_debugfs,
++				&ibdev->odp_stats.num_mrs_not_found);
++
++	debugfs_create_atomic_t("num_failed_resolutions", 0400,
++				ibdev->odp_stats.odp_debugfs,
++				&ibdev->odp_stats.num_failed_resolutions);
++
++	debugfs_create_atomic_t("num_timeout_mmu_notifier", 0400,
++				ibdev->odp_stats.odp_debugfs,
++				&ibdev->odp_stats.num_timeout_mmu_notifier);
++
++	debugfs_create_atomic_t("num_prefetch", 0400,
++				ibdev->odp_stats.odp_debugfs,
++				&ibdev->num_prefetch);
++#else
+ 	dbgfs_entry = debugfs_create_atomic_t("num_odp_mrs", 0400,
+ 					      ibdev->odp_stats.odp_debugfs,
+ 					      &ibdev->odp_stats.num_odp_mrs);
+@@ -201,6 +226,7 @@ int mlx5_ib_exp_odp_init_one(struct mlx5
+ 					      &ibdev->num_prefetch);
+ 	if (!dbgfs_entry)
+ 		goto out_debugfs;
++#endif //HAVE_DEBUGFS_CREATE_U8_RET_STRUCT
+ 
+ 	dbgfs_entry = debugfs_create_file("odp_hist", 0400,
+ 					  ibdev->odp_stats.odp_debugfs,

@@ -1,0 +1,20 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/ulp/ipoib/rss_tss/ipoib_rss.h
+
+Change-Id: Ie36223a8a89f1c0895e95e46421b0720ac0e690d
+---
+ drivers/infiniband/ulp/ipoib/rss_tss/ipoib_rss.h | 3 +++
+ 1 file changed, 3 insertions(+)
+
+--- a/drivers/infiniband/ulp/ipoib/rss_tss/ipoib_rss.h
++++ b/drivers/infiniband/ulp/ipoib/rss_tss/ipoib_rss.h
+@@ -104,6 +104,9 @@ struct ipoib_recv_ring {
+ 	struct ipoib_rx_cm_info	cm;
+ 	struct ipoib_rx_ring_stats stats;
+ 	unsigned		index;
++#ifdef CONFIG_COMPAT_LRO_ENABLED_IPOIB
++	struct ipoib_lro lro;
++#endif
+ };
+ 
+ static inline void ipoib_build_sge_rss(struct ipoib_send_ring *send_ring,

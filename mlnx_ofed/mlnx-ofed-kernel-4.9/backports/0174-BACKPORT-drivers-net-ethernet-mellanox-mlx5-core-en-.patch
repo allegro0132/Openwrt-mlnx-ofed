@@ -1,0 +1,62 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx5/core/en/params.c
+
+Change-Id: Ia71fd7b7bee5152f28875a1d4266d402621e8ee8
+---
+ .../net/ethernet/mellanox/mlx5/core/en/params.c    | 22 ++++++++++++++++++----
+ 1 file changed, 18 insertions(+), 4 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en/params.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en/params.c
+@@ -6,16 +6,22 @@
+ u32 mlx5e_rx_get_linear_frag_sz(struct mlx5e_params *params)
+ {
+ 	u16 hw_mtu = MLX5E_SW2HW_MTU(params, params->sw_mtu);
+-	u16 linear_rq_headroom = params->xdp_prog ?
+-		XDP_PACKET_HEADROOM : MLX5_RX_HEADROOM;
++#ifdef HAVE_XDP_BUFF
++       u16 linear_rq_headroom = params->xdp_prog ?
++       	XDP_PACKET_HEADROOM : MLX5_RX_HEADROOM;
++#else
++	u16 linear_rq_headroom = MLX5_RX_HEADROOM;
++#endif
+ 	u32 frag_sz;
+ 
+ 	linear_rq_headroom += NET_IP_ALIGN;
+ 
+ 	frag_sz = MLX5_SKB_FRAG_SZ(linear_rq_headroom + hw_mtu);
+ 
++#ifdef HAVE_XDP_BUFF
+ 	if (params->xdp_prog && frag_sz < PAGE_SIZE)
+ 		frag_sz = PAGE_SIZE;
++#endif
+ 
+ 	return frag_sz;
+ }
+@@ -31,7 +37,11 @@ bool mlx5e_rx_is_linear_skb(struct mlx5e
+ {
+ 	u32 frag_sz = mlx5e_rx_get_linear_frag_sz(params);
+ 
++#ifdef CONFIG_COMPAT_LRO_ENABLED_IPOIB
++	return !IS_HW_LRO(params) && frag_sz <= PAGE_SIZE;
++#else
+ 	return !params->lro_en && frag_sz <= PAGE_SIZE;
++#endif
+ }
+ 
+ #define MLX5_MAX_MPWQE_LOG_WQE_STRIDE_SZ ((BIT(__mlx5_bit_sz(wq, log_wqe_stride_size)) - 1) + \
+@@ -90,8 +100,12 @@ u8 mlx5e_mpwqe_get_log_num_strides(struc
+ u16 mlx5e_get_rq_headroom(struct mlx5_core_dev *mdev,
+ 			  struct mlx5e_params *params)
+ {
+-	u16 linear_rq_headroom = params->xdp_prog ?
+-		XDP_PACKET_HEADROOM : MLX5_RX_HEADROOM;
++#ifdef HAVE_XDP_BUFF
++       u16 linear_rq_headroom = params->xdp_prog ?
++       	XDP_PACKET_HEADROOM : MLX5_RX_HEADROOM;
++#else
++	u16 linear_rq_headroom = MLX5_RX_HEADROOM;
++#endif
+ 	bool is_linear_skb;
+ 
+ 	linear_rq_headroom += NET_IP_ALIGN;

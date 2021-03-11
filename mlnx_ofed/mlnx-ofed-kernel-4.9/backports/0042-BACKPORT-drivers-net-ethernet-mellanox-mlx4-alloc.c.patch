@@ -1,0 +1,185 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx4/alloc.c
+
+Change-Id: I9815efbdf418e120e534a3d97dda1fa30862d33c
+---
+ drivers/net/ethernet/mellanox/mlx4/alloc.c | 73 +++++++++++++++++++++++++++++-
+ 1 file changed, 71 insertions(+), 2 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx4/alloc.c
++++ b/drivers/net/ethernet/mellanox/mlx4/alloc.c
+@@ -575,7 +575,11 @@ out:
+ }
+ 
+ static int mlx4_buf_direct_alloc(struct mlx4_dev *dev, int size,
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 				 struct mlx4_buf *buf)
++#else
++				 struct mlx4_buf *buf, gfp_t gfp)
++#endif
+ {
+ 	dma_addr_t t;
+ 
+@@ -583,8 +587,16 @@ static int mlx4_buf_direct_alloc(struct
+ 	buf->npages       = 1;
+ 	buf->page_shift   = get_order(size) + PAGE_SHIFT;
+ 	buf->direct.buf   =
+-		dma_alloc_coherent(&dev->persist->pdev->dev, size, &t,
+-				   GFP_KERNEL);
++#ifdef HAVE_DMA_ZALLOC_COHERENT
++		dma_alloc_coherent(&dev->persist->pdev->dev,
++#else
++		dma_alloc_coherent(&dev->persist->pdev->dev,
++#endif
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
++				   size, &t, GFP_KERNEL);
++#else
++				   size, &t, gfp);
++#endif
+ 	if (!buf->direct.buf)
+ 		return -ENOMEM;
+ 
+@@ -604,10 +616,18 @@ static int mlx4_buf_direct_alloc(struct
+  *  multiple pages, so we don't require too much contiguous memory.
+  */
+ int mlx4_buf_alloc(struct mlx4_dev *dev, int size, int max_direct,
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 		   struct mlx4_buf *buf)
++#else
++		   struct mlx4_buf *buf, gfp_t gfp)
++#endif
+ {
+ 	if (size <= max_direct) {
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 		return mlx4_buf_direct_alloc(dev, size, buf);
++#else
++		return mlx4_buf_direct_alloc(dev, size, buf, gfp);
++#endif
+ 	} else {
+ 		dma_addr_t t;
+ 		int i;
+@@ -621,14 +641,26 @@ int mlx4_buf_alloc(struct mlx4_dev *dev,
+ 					       dev_to_node(&dev->persist->pdev->dev));
+ 		if (!buf->page_list)
+ 			buf->page_list = kcalloc(buf->nbufs, sizeof(*buf->page_list),
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 						 GFP_KERNEL);
++#else
++						 gfp);
++#endif
+ 		if (!buf->page_list)
+ 			return -ENOMEM;
+ 
+ 		for (i = 0; i < buf->nbufs; ++i) {
+ 			buf->page_list[i].buf =
++#ifdef HAVE_DMA_ZALLOC_COHERENT
+ 				dma_alloc_coherent(&dev->persist->pdev->dev,
++#else
++				dma_alloc_coherent(&dev->persist->pdev->dev,
++#endif
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 						   PAGE_SIZE, &t, GFP_KERNEL);
++#else
++						   PAGE_SIZE, &t, gfp);
++#endif
+ 			if (!buf->page_list[i].buf)
+ 				goto err_free;
+ 
+@@ -664,14 +696,27 @@ void mlx4_buf_free(struct mlx4_dev *dev,
+ }
+ EXPORT_SYMBOL_GPL(mlx4_buf_free);
+ 
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ static struct mlx4_db_pgdir *mlx4_alloc_db_pgdir(struct device *dma_device)
++#else
++static struct mlx4_db_pgdir *mlx4_alloc_db_pgdir(struct device *dma_device,
++						 gfp_t gfp)
++#endif
+ {
+ 	struct mlx4_db_pgdir *pgdir;
+ 
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 	pgdir = kzalloc_node(sizeof(*pgdir), GFP_KERNEL,
++#else
++	pgdir = kzalloc_node(sizeof(*pgdir), gfp,
++#endif
+ 			     dev_to_node(dma_device));
+ 	if (!pgdir)
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 		pgdir = kzalloc(sizeof(*pgdir), GFP_KERNEL);
++#else
++		pgdir = kzalloc(sizeof(*pgdir), gfp);
++#endif
+ 	if (!pgdir)
+ 		return NULL;
+ 
+@@ -679,7 +724,11 @@ static struct mlx4_db_pgdir *mlx4_alloc_
+ 	pgdir->bits[0] = pgdir->order0;
+ 	pgdir->bits[1] = pgdir->order1;
+ 	pgdir->db_page = dma_alloc_coherent(dma_device, PAGE_SIZE,
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 					    &pgdir->db_dma, GFP_KERNEL);
++#else
++					    &pgdir->db_dma, gfp);
++#endif
+ 	if (!pgdir->db_page) {
+ 		kfree(pgdir);
+ 		return NULL;
+@@ -719,7 +768,11 @@ found:
+ 	return 0;
+ }
+ 
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ int mlx4_db_alloc(struct mlx4_dev *dev, struct mlx4_db *db, int order)
++#else
++int mlx4_db_alloc(struct mlx4_dev *dev, struct mlx4_db *db, int order, gfp_t gfp)
++#endif
+ {
+ 	struct mlx4_priv *priv = mlx4_priv(dev);
+ 	struct mlx4_db_pgdir *pgdir;
+@@ -731,7 +784,11 @@ int mlx4_db_alloc(struct mlx4_dev *dev,
+ 		if (!mlx4_alloc_db_from_pgdir(pgdir, db, order))
+ 			goto out;
+ 
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 	pgdir = mlx4_alloc_db_pgdir(&dev->persist->pdev->dev);
++#else
++	pgdir = mlx4_alloc_db_pgdir(&dev->persist->pdev->dev, gfp);
++#endif
+ 	if (!pgdir) {
+ 		ret = -ENOMEM;
+ 		goto out;
+@@ -783,13 +840,21 @@ int mlx4_alloc_hwq_res(struct mlx4_dev *
+ {
+ 	int err;
+ 
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 	err = mlx4_db_alloc(dev, &wqres->db, 1);
++#else
++	err = mlx4_db_alloc(dev, &wqres->db, 1, GFP_KERNEL);
++#endif
+ 	if (err)
+ 		return err;
+ 
+ 	*wqres->db.db = 0;
+ 
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 	err = mlx4_buf_direct_alloc(dev, size, &wqres->buf);
++#else
++	err = mlx4_buf_direct_alloc(dev, size, &wqres->buf, GFP_KERNEL);
++#endif
+ 	if (err)
+ 		goto err_db;
+ 
+@@ -798,7 +863,11 @@ int mlx4_alloc_hwq_res(struct mlx4_dev *
+ 	if (err)
+ 		goto err_buf;
+ 
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 	err = mlx4_buf_write_mtt(dev, &wqres->mtt, &wqres->buf);
++#else
++	err = mlx4_buf_write_mtt(dev, &wqres->mtt, &wqres->buf, GFP_KERNEL);
++#endif
+ 	if (err)
+ 		goto err_mtt;
+ 

@@ -1,0 +1,113 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/core/core_priv.h
+
+Change-Id: I2bc488ac8a160796abc67f9a300778c244c7fdfe
+---
+ drivers/infiniband/core/core_priv.h | 51 +++++++++++++++++++++++++++++
+ 1 file changed, 51 insertions(+)
+
+--- a/drivers/infiniband/core/core_priv.h
++++ b/drivers/infiniband/core/core_priv.h
+@@ -40,6 +40,7 @@
+ #include <net/netns/generic.h>
+ 
+ #include <rdma/ib_verbs.h>
++#include <rdma/ib_addr.h>
+ #include <rdma/opa_addr.h>
+ #include <rdma/ib_mad.h>
+ #include <rdma/restrack.h>
+@@ -64,7 +65,13 @@ struct pkey_index_qp_list {
+  */
+ struct rdma_dev_net {
+ 	struct sock *nl_sock;
++#ifdef HAVE_POSSIBLE_NET_T
+ 	possible_net_t net;
++#else
++#ifdef CONFIG_NET_NS
++	struct net           *net;
++#endif
++#endif
+ 	u32 id;
+ };
+ 
+@@ -140,6 +147,7 @@ int ib_cache_setup_one(struct ib_device
+ void ib_cache_cleanup_one(struct ib_device *device);
+ void ib_cache_release_one(struct ib_device *device);
+ 
++#ifdef HAVE_CGROUP_RDMA_H
+ #ifdef CONFIG_CGROUP_RDMA
+ void ib_device_register_rdmacg(struct ib_device *device);
+ void ib_device_unregister_rdmacg(struct ib_device *device);
+@@ -173,11 +181,39 @@ static inline void ib_rdmacg_uncharge(st
+ {
+ }
+ #endif
++#endif /* HAVE_CGROUP_RDMA_H */
+ 
+ static inline bool rdma_is_upper_dev_rcu(struct net_device *dev,
+ 					 struct net_device *upper)
+ {
++#if defined(HAVE_NETDEV_HAS_UPPER_DEV_ALL_RCU)
+ 	return netdev_has_upper_dev_all_rcu(dev, upper);
++#elif defined(HAVE_NETDEV_FOR_EACH_ALL_UPPER_DEV_RCU)
++	struct net_device *_upper = NULL;
++	struct list_head *iter;
++
++	netdev_for_each_all_upper_dev_rcu(dev, _upper, iter)
++		if (_upper == upper)
++			break;
++
++	return _upper == upper;
++#else
++	struct net_device *rdev_upper;
++	struct net_device *master;
++	bool ret;
++
++	if (!upper || !dev)
++	        ret = false;
++
++	rdev_upper = rdma_vlan_dev_real_dev(upper);
++	master = netdev_master_upper_dev_get_rcu(dev);
++
++	ret = (upper == master) ||
++	      (rdev_upper && (rdev_upper == master)) ||
++	      (rdev_upper == dev);
++
++	return ret;
++#endif
+ }
+ 
+ int addr_init(void);
+@@ -189,17 +225,32 @@ void ib_mad_cleanup(void);
+ int ib_sa_init(void);
+ void ib_sa_cleanup(void);
+ 
++#if !(defined(HAVE_STRUCT_CLASS_NS_TYPE) && defined(HAVE_PERENT_OPERATIONS_ID))
++int rdma_nl_init(void);
++#endif
+ void rdma_nl_exit(void);
+ 
+ int ib_nl_handle_resolve_resp(struct sk_buff *skb,
++#ifdef HAVE_NETLINK_EXT_ACK
+ 			      struct nlmsghdr *nlh,
+ 			      struct netlink_ext_ack *extack);
++#else
++			      struct nlmsghdr *nlh);
++#endif
+ int ib_nl_handle_set_timeout(struct sk_buff *skb,
++#ifdef HAVE_NETLINK_EXT_ACK
+ 			     struct nlmsghdr *nlh,
+ 			     struct netlink_ext_ack *extack);
++#else
++			     struct nlmsghdr *nlh);
++#endif
+ int ib_nl_handle_ip_res_resp(struct sk_buff *skb,
++#ifdef HAVE_NETLINK_EXT_ACK
+ 			     struct nlmsghdr *nlh,
+ 			     struct netlink_ext_ack *extack);
++#else
++			     struct nlmsghdr *nlh);
++#endif
+ 
+ int ib_get_cached_subnet_prefix(struct ib_device *device,
+ 				u8                port_num,

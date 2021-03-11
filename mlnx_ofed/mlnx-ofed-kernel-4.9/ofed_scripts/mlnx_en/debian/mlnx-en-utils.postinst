@@ -1,0 +1,15 @@
+#!/bin/bash
+
+dist=`lsb_release -s -i | tr '[:upper:]' '[:lower:]'`
+dist_ver=`lsb_release -s -r`
+
+if [ "X$dist" != "Xubuntu" ]; then
+	/usr/sbin/update-rc.d mlnx-en.d defaults > /dev/null 2>&1
+fi
+
+if (systemctl 2>/dev/null | grep -qw "\\-\.mount" 2>/dev/null); then
+	systemctl daemon-reload >/dev/null 2>&1 || true
+	systemctl enable mlnx-en.d >/dev/null  2>&1 || true
+fi
+
+exit 0

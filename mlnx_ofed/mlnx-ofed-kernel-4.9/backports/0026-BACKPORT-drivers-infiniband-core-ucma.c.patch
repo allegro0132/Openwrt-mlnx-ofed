@@ -1,0 +1,240 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/core/ucma.c
+
+Change-Id: I7eed2b3e39ee6f10afae0c92c227d169ede9e83f
+---
+ drivers/infiniband/core/ucma.c | 96 ++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 93 insertions(+), 3 deletions(-)
+
+--- a/drivers/infiniband/core/ucma.c
++++ b/drivers/infiniband/core/ucma.c
+@@ -43,9 +43,9 @@
+ #include <linux/sysctl.h>
+ #include <linux/module.h>
+ #include <linux/nsproxy.h>
+-
++#ifdef HAVE_ARRAY_INDEX_NOSPEC
+ #include <linux/nospec.h>
+-
++#endif
+ #include <rdma/rdma_user_cm.h>
+ #include <rdma/ib_marshall.h>
+ #include <rdma/rdma_cm.h>
+@@ -56,9 +56,13 @@
+ MODULE_AUTHOR("Sean Hefty");
+ MODULE_DESCRIPTION("RDMA Userspace Connection Manager Access");
+ MODULE_LICENSE("Dual BSD/GPL");
++#ifdef RETPOLINE_MLNX
++MODULE_INFO(retpoline, "Y");
++#endif
+ 
+ static unsigned int max_backlog = 1024;
+ 
++#ifndef CONFIG_SYSCTL_SYSCALL_CHECK
+ static struct ctl_table_header *ucma_ctl_table_hdr;
+ static struct ctl_table ucma_ctl_table[] = {
+ 	{
+@@ -70,6 +74,14 @@ static struct ctl_table ucma_ctl_table[]
+ 	},
+ 	{ }
+ };
++#ifndef HAVE_REGISTER_NET_SYSCTL
++static struct ctl_path ucma_ctl_path[] = {
++	{ .procname = "net" },
++	{ .procname = "rdma_ucm" },
++	{ }
++};
++#endif
++#endif
+ 
+ struct ucma_file {
+ 	struct mutex		mut;
+@@ -205,6 +217,9 @@ static void ucma_close_id(struct work_st
+ static struct ucma_context *ucma_alloc_ctx(struct ucma_file *file)
+ {
+ 	struct ucma_context *ctx;
++#ifndef HAVE_IDR_ALLOC
++	int ret;
++#endif
+ 
+ 	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
+ 	if (!ctx)
+@@ -216,11 +231,26 @@ static struct ucma_context *ucma_alloc_c
+ 	INIT_LIST_HEAD(&ctx->mc_list);
+ 	ctx->file = file;
+ 
++#ifndef HAVE_IDR_ALLOC
++	do {
++		ret = idr_pre_get(&ctx_idr, GFP_KERNEL);
++		if (!ret)
++			goto error;
++
++		mutex_lock(&mut);
++		ret = idr_get_new(&ctx_idr, ctx, &ctx->id);
++		mutex_unlock(&mut);
++	} while (ret == -EAGAIN);
++
++	if (ret)
++		goto error;
++#else
+ 	mutex_lock(&mut);
+ 	ctx->id = idr_alloc(&ctx_idr, ctx, 0, 0, GFP_KERNEL);
+ 	mutex_unlock(&mut);
+ 	if (ctx->id < 0)
+ 		goto error;
++#endif
+ 
+ 	list_add_tail(&ctx->list, &file->ctx_list);
+ 	return ctx;
+@@ -233,16 +263,34 @@ error:
+ static struct ucma_multicast* ucma_alloc_multicast(struct ucma_context *ctx)
+ {
+ 	struct ucma_multicast *mc;
++#ifndef HAVE_IDR_ALLOC
++	int ret;
++#endif
+ 
+ 	mc = kzalloc(sizeof(*mc), GFP_KERNEL);
+ 	if (!mc)
+ 		return NULL;
+ 
++#ifndef HAVE_IDR_ALLOC
++	do {
++		ret = idr_pre_get(&multicast_idr, GFP_KERNEL);
++		if (!ret)
++			goto error;
++
++		mutex_lock(&mut);
++		ret = idr_get_new(&multicast_idr, mc, &mc->id);
++		mutex_unlock(&mut);
++	} while (ret == -EAGAIN);
++
++	if (ret)
++		goto error;
++#else
+ 	mutex_lock(&mut);
+ 	mc->id = idr_alloc(&multicast_idr, NULL, 0, 0, GFP_KERNEL);
+ 	mutex_unlock(&mut);
+ 	if (mc->id < 0)
+ 		goto error;
++#endif
+ 
+ 	mc->ctx = ctx;
+ 	list_add_tail(&mc->list, &ctx->mc_list);
+@@ -1581,7 +1629,11 @@ static ssize_t ucma_migrate_id(struct uc
+ 	struct rdma_ucm_migrate_id cmd;
+ 	struct rdma_ucm_migrate_resp resp;
+ 	struct ucma_context *ctx;
++#ifdef HAVE_FDGET
+ 	struct fd f;
++#else
++	struct file *filp;
++#endif
+ 	struct ucma_file *cur_file;
+ 	int ret = 0;
+ 
+@@ -1589,16 +1641,30 @@ static ssize_t ucma_migrate_id(struct uc
+ 		return -EFAULT;
+ 
+ 	/* Get current fd to protect against it being closed */
++#ifdef HAVE_FDGET
+ 	f = fdget(cmd.fd);
+ 	if (!f.file)
++#else
++	filp = fget(cmd.fd);
++	if (!filp)
++#endif
+ 		return -ENOENT;
++#ifdef HAVE_FDGET
+ 	if (f.file->f_op != &ucma_fops) {
++#else
++	if (filp->f_op != &ucma_fops) {
++#endif
+ 		ret = -EINVAL;
+ 		goto file_put;
+ 	}
+ 
+ 	/* Validate current fd and prevent destruction of id. */
++#ifdef HAVE_FDGET
+ 	ctx = ucma_get_ctx(f.file->private_data, cmd.id);
++#else
++	ctx = ucma_get_ctx(filp->private_data, cmd.id);
++#endif
++
+ 	if (IS_ERR(ctx)) {
+ 		ret = PTR_ERR(ctx);
+ 		goto file_put;
+@@ -1632,7 +1698,11 @@ response:
+ 
+ 	ucma_put_ctx(ctx);
+ file_put:
++#ifdef HAVE_FDGET
+ 	fdput(f);
++#else
++	fput(filp);
++#endif
+ 	return ret;
+ }
+ 
+@@ -1685,8 +1755,9 @@ static ssize_t ucma_write(struct file *f
+ 
+ 	if (hdr.cmd >= ARRAY_SIZE(ucma_cmd_table))
+ 		return -EINVAL;
++#ifdef HAVE_ARRAY_INDEX_NOSPEC
+ 	hdr.cmd = array_index_nospec(hdr.cmd, ARRAY_SIZE(ucma_cmd_table));
+-
++#endif
+ 	if (hdr.in + sizeof(hdr) > len)
+ 		return -EINVAL;
+ 
+@@ -1744,7 +1815,11 @@ static int ucma_open(struct inode *inode
+ 	filp->private_data = file;
+ 	file->filp = filp;
+ 
++#ifdef HAVE_STREAM_OPEN
+ 	return stream_open(inode, filp);
++#else
++	return nonseekable_open(inode, filp);
++#endif
+ }
+ 
+ static int ucma_close(struct inode *inode, struct file *filp)
+@@ -1827,15 +1902,24 @@ static int __init ucma_init(void)
+ 		goto err1;
+ 	}
+ 
++#ifndef CONFIG_SYSCTL_SYSCALL_CHECK
++#ifdef HAVE_REGISTER_NET_SYSCTL
+ 	ucma_ctl_table_hdr = register_net_sysctl(&init_net, "net/rdma_ucm", ucma_ctl_table);
++#else
++	ucma_ctl_table_hdr = register_sysctl_paths(ucma_ctl_path,
++						   ucma_ctl_table);
++#endif
+ 	if (!ucma_ctl_table_hdr) {
+ 		pr_err("rdma_ucm: couldn't register sysctl paths\n");
+ 		ret = -ENOMEM;
+ 		goto err2;
+ 	}
++#endif
+ 	return 0;
++#ifndef CONFIG_SYSCTL_SYSCALL_CHECK
+ err2:
+ 	device_remove_file(ucma_misc.this_device, &dev_attr_abi_version);
++#endif
+ err1:
+ 	misc_deregister(&ucma_misc);
+ 	return ret;
+@@ -1843,7 +1927,13 @@ err1:
+ 
+ static void __exit ucma_cleanup(void)
+ {
++#ifndef CONFIG_SYSCTL_SYSCALL_CHECK
++#ifdef HAVE_REGISTER_NET_SYSCTL
+ 	unregister_net_sysctl_table(ucma_ctl_table_hdr);
++#else
++	unregister_sysctl_table(ucma_ctl_table_hdr);
++#endif
++#endif
+ 	device_remove_file(ucma_misc.this_device, &dev_attr_abi_version);
+ 	misc_deregister(&ucma_misc);
+ 	idr_destroy(&ctx_idr);

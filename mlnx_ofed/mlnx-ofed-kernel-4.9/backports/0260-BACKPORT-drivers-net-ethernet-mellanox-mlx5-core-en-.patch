@@ -1,0 +1,59 @@
+From: Bodong Wang <bodong@mellanox.com>
+Subject: [PATCH] BACKPORT:
+ drivers/net/ethernet/mellanox/mlx5/core/en/tc_tun_gre.c
+
+Change-Id: Icef20eed255e3494ebda9680a4f8e7cf66a4d864
+---
+ .../net/ethernet/mellanox/mlx5/core/en/tc_tun_gre.c   | 19 ++++++++++++++++---
+ 1 file changed, 16 insertions(+), 3 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en/tc_tun_gre.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en/tc_tun_gre.c
+@@ -1,6 +1,8 @@
+ // SPDX-License-Identifier: GPL-2.0 OR Linux-OpenIB
+ /* Copyright (c) 2018 Mellanox Technologies. */
+ 
++#ifdef HAVE_TCF_TUNNEL_INFO
++
+ #include <net/gre.h>
+ #include "en/tc_tun.h"
+ 
+@@ -16,8 +18,11 @@ static int mlx5e_tc_tun_calc_hlen_gretap
+ 
+ static int mlx5e_tc_tun_init_encap_attr_gretap(struct net_device *tunnel_dev,
+ 					       struct mlx5e_priv *priv,
+-					       struct mlx5e_encap_entry *e,
+-					       struct netlink_ext_ack *extack)
++					       struct mlx5e_encap_entry *e
++#ifdef HAVE_TC_CLS_OFFLOAD_EXTACK
++					       , struct netlink_ext_ack *extack
++#endif
++					      )
+ {
+ 	e->tunnel = &gre_tunnel;
+ 	e->reformat_type = MLX5_REFORMAT_TYPE_L2_TO_NVGRE;
+@@ -56,11 +61,17 @@ static int mlx5e_tc_tun_parse_gretap(str
+ 				     struct mlx5_flow_spec *spec,
+ 				     struct tc_cls_flower_offload *f,
+ 				     void *headers_c,
+-				     void *headers_v)
++				     void *headers_v
++#ifndef HAVE_TC_SETUP_FLOW_ACTION
++				     , struct flow_rule *rule
++#endif
++							  )
+ {
+ 	void *misc_c = MLX5_ADDR_OF(fte_match_param, spec->match_criteria, misc_parameters);
+ 	void *misc_v = MLX5_ADDR_OF(fte_match_param, spec->match_value, misc_parameters);
++#ifdef HAVE_TC_SETUP_FLOW_ACTION
+ 	struct flow_rule *rule = tc_cls_flower_offload_flow_rule(f);
++#endif
+ 
+ 	MLX5_SET_TO_ONES(fte_match_set_lyr_2_4, headers_c, ip_protocol);
+ 	MLX5_SET(fte_match_set_lyr_2_4, headers_v, ip_protocol, IPPROTO_GRE);
+@@ -93,3 +104,5 @@ struct mlx5e_tc_tunnel gre_tunnel = {
+ 	.parse_udp_ports      = NULL,
+ 	.parse_tunnel         = mlx5e_tc_tun_parse_gretap,
+ };
++
++#endif /* HAVE_TCF_TUNNEL_INFO */

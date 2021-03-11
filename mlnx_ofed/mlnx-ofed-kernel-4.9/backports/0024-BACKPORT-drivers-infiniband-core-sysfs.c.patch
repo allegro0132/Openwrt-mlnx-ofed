@@ -1,0 +1,159 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/core/sysfs.c
+
+Change-Id: I6a207b6be185730d33acee29dc7b34448b45fc33
+---
+ drivers/infiniband/core/sysfs.c | 102 ++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 102 insertions(+)
+
+--- a/drivers/infiniband/core/sysfs.c
++++ b/drivers/infiniband/core/sysfs.c
+@@ -110,6 +110,7 @@ static ssize_t port_attr_show(struct kob
+ 	return port_attr->show(p, port_attr, buf);
+ }
+ 
++#if !defined(HAVE_VLAN_DEV_GET_EGRESS_QOS_MASK)
+ static ssize_t port_attr_store(struct kobject *kobj,
+ 			       struct attribute *attr,
+ 			       const char *buf, size_t count)
+@@ -122,10 +123,17 @@ static ssize_t port_attr_store(struct ko
+ 		return -EIO;
+ 	return port_attr->store(p, port_attr, buf, count);
+ }
++#endif
+ 
++#ifdef CONFIG_COMPAT_IS_CONST_KOBJECT_SYSFS_OPS
+ static const struct sysfs_ops port_sysfs_ops = {
++#else
++static struct sysfs_ops port_sysfs_ops = {
++#endif
+ 	.show	= port_attr_show,
++#if !defined(HAVE_VLAN_DEV_GET_EGRESS_QOS_MASK)
+ 	.store	= port_attr_store
++#endif
+ };
+ 
+ static ssize_t gid_attr_show(struct kobject *kobj,
+@@ -142,7 +150,11 @@ static ssize_t gid_attr_show(struct kobj
+ 	return port_attr->show(p, port_attr, buf);
+ }
+ 
++#ifdef CONFIG_COMPAT_IS_CONST_KOBJECT_SYSFS_OPS
+ static const struct sysfs_ops gid_attr_sysfs_ops = {
++#else
++static struct sysfs_ops gid_attr_sysfs_ops = {
++#endif
+ 	.show = gid_attr_show
+ };
+ 
+@@ -236,6 +248,90 @@ static ssize_t sm_sl_show(struct ib_port
+ 	return sprintf(buf, "%d\n", attr.sm_sl);
+ }
+ 
++#if !defined(HAVE_VLAN_DEV_GET_EGRESS_QOS_MASK)
++static ssize_t skprio2up_show(struct ib_port *p, struct port_attribute *unused,
++			  char *buf)
++{
++	int ret = 0;
++	int i;
++	u8 port_num = p->port_num;
++	struct ib_device *ibdev = p->ibdev;
++
++	for (i = 0; i < NUM_SKPRIO; ++i) {
++		int res;
++		u8 up;
++
++		res = ib_get_skprio2up(ibdev, port_num, i, &up);
++		if (res) {
++			pr_err("failed to get skprio2up (%d)\n", res);
++			ret = res;
++			goto out;
++		}
++		res = sprintf(buf + ret, "%d ", up);
++		if (res < 0) {
++			pr_err("failed to copy skprio2up (%d)\n", res);
++			ret = res;
++			goto out;
++		}
++		ret += res;
++	}
++	sprintf(buf + ret -1, "\n");
++out:
++	return ret;
++}
++
++static ssize_t skprio2up_store(struct ib_port *p, struct port_attribute *unused,
++		const char *buf, size_t count)
++{
++	int ret = count;
++	char save;
++	int i = 0;
++	u8 port_num = p->port_num;
++	struct ib_device *ibdev = p->ibdev;
++	u8 map[NUM_SKPRIO];
++
++	do {
++		int len;
++		int new_value;
++
++		if (i >= NUM_SKPRIO) {
++			pr_err("bad number of elemets in skprio2up array\n");
++			goto out;
++		}
++
++		len = strcspn(buf, " ");
++
++		/* nul-terminate and parse */
++		save = buf[len];
++		((char *)buf)[len] = '\0';
++
++		if (sscanf(buf, "%d", &new_value) != 1 ||
++				new_value >= NUM_UP || new_value < 0) {
++			pr_err( "bad user priority: '%s'\n", buf);
++			goto out;
++		}
++		map[i] = new_value;
++
++		buf += len+1;
++		i++;
++	} while (save == ' ');
++
++	if (i != NUM_SKPRIO) {
++		pr_err("bad number of elemets in skprio2up array\n");
++		goto out;
++	}
++	for (i = 0; i < NUM_SKPRIO; ++i) {
++		int res = ib_set_skprio2up(ibdev, port_num, i, map[i]);
++		if (res)
++			return res;
++	}
++	return ret;
++
++out:
++	return -EINVAL;
++}
++#endif
++
+ static ssize_t cap_mask_show(struct ib_port *p, struct port_attribute *unused,
+ 			     char *buf)
+ {
+@@ -320,6 +416,9 @@ static PORT_ATTR_RO(lid);
+ static PORT_ATTR_RO(lid_mask_count);
+ static PORT_ATTR_RO(sm_lid);
+ static PORT_ATTR_RO(sm_sl);
++#if !defined(HAVE_VLAN_DEV_GET_EGRESS_QOS_MASK)
++static PORT_ATTR(skprio2up, S_IRUGO | S_IWUSR, skprio2up_show, skprio2up_store);
++#endif
+ static PORT_ATTR_RO(cap_mask);
+ static PORT_ATTR_RO(rate);
+ static PORT_ATTR_RO(phys_state);
+@@ -333,6 +432,9 @@ static struct attribute *port_default_at
+ 	&port_attr_sm_lid.attr,
+ 	&port_attr_has_smi.attr,
+ 	&port_attr_sm_sl.attr,
++#if !defined(HAVE_VLAN_DEV_GET_EGRESS_QOS_MASK)
++	&port_attr_skprio2up.attr,
++#endif
+ 	&port_attr_cap_mask.attr,
+ 	&port_attr_rate.attr,
+ 	&port_attr_phys_state.attr,

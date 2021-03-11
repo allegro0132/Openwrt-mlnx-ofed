@@ -1,0 +1,81 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx4/fw.c
+
+Change-Id: I83aa2d7625557ff6a98465da1eabc26685f13814
+---
+ drivers/net/ethernet/mellanox/mlx4/fw.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+--- a/drivers/net/ethernet/mellanox/mlx4/fw.c
++++ b/drivers/net/ethernet/mellanox/mlx4/fw.c
+@@ -312,9 +312,11 @@ static int mlx4_handle_vst_qinq(struct m
+ 	vp_admin = &priv->mfunc.master.vf_admin[slave].vport[port];
+ 	slave_state = &priv->mfunc.master.slave_state[slave];
+ 
++#ifdef HAVE_ETH_P_8021AD
+ 	if ((vp_admin->vlan_proto != htons(ETH_P_8021AD)) ||
+ 	    (!slave_state->active))
+ 		return 0;
++#endif
+ 
+ 	if (vp_oper->state.vlan_proto == vp_admin->vlan_proto &&
+ 	    vp_oper->state.default_vlan == vp_admin->default_vlan &&
+@@ -411,7 +413,9 @@ int mlx4_QUERY_FUNC_CAP_wrapper(struct m
+ 			mlx4_get_active_ports(dev, slave);
+ 		int converted_port = mlx4_slave_convert_port(
+ 				dev, slave, vhcr->in_modifier);
++#ifdef HAVE_NETIF_F_HW_VLAN_STAG_RX
+ 		struct mlx4_vport_oper_state *vp_oper;
++#endif
+ 
+ 		if (converted_port < 0)
+ 			return -EINVAL;
+@@ -452,7 +456,9 @@ int mlx4_QUERY_FUNC_CAP_wrapper(struct m
+ 		MLX4_PUT(outbox->buf, dev->caps.phys_port_id[vhcr->in_modifier],
+ 			 QUERY_FUNC_CAP_PHYS_PORT_ID);
+ 
++#ifdef HAVE_NETIF_F_HW_VLAN_STAG_RX
+ 		vp_oper = &priv->mfunc.master.vf_oper[slave].vport[port];
++#endif
+ 		err = mlx4_handle_vst_qinq(priv, slave, port);
+ 		if (err)
+ 			return err;
+@@ -460,8 +466,10 @@ int mlx4_QUERY_FUNC_CAP_wrapper(struct m
+ 		field = 0;
+ 		if (dev->caps.phv_bit[port])
+ 			field |= QUERY_FUNC_CAP_PHV_BIT;
++#ifdef HAVE_NETIF_F_HW_VLAN_STAG_RX
+ 		if (vp_oper->state.vlan_proto == htons(ETH_P_8021AD))
+ 			field |= QUERY_FUNC_CAP_VLAN_OFFLOAD_DISABLE;
++#endif
+ 		MLX4_PUT(outbox->buf, field, QUERY_FUNC_CAP_FLAGS0_OFFSET);
+ 
+ 	} else if (vhcr->op_modifier == 0) {
+@@ -983,9 +991,11 @@ int mlx4_QUERY_DEV_CAP(struct mlx4_dev *
+ 	MLX4_GET(field, outbox, QUERY_DEV_CAP_USER_MAC_EN_OFFSET);
+ 	if (field & (1 << 2))
+ 		dev_cap->flags2 |= MLX4_DEV_CAP_FLAG2_USER_MAC_EN;
++#ifdef HAVE_NETIF_F_HW_VLAN_STAG_RX
+ 	MLX4_GET(field, outbox, QUERY_DEV_CAP_SVLAN_BY_QP_OFFSET);
+ 	if (field & 0x1)
+ 		dev_cap->flags2 |= MLX4_DEV_CAP_FLAG2_SVLAN_BY_QP;
++#endif
+ 	MLX4_GET(field, outbox, QUERY_DEV_CAP_MAX_QP_MCG_OFFSET);
+ 	dev_cap->max_qp_per_mcg = 1 << field;
+ 	MLX4_GET(field, outbox, QUERY_DEV_CAP_RSVD_MCG_OFFSET);
+@@ -3215,6 +3225,7 @@ int set_phv_bit(struct mlx4_dev *dev, u8
+ }
+ EXPORT_SYMBOL(set_phv_bit);
+ 
++#ifdef HAVE_NETIF_F_HW_VLAN_STAG_RX
+ int mlx4_get_is_vlan_offload_disabled(struct mlx4_dev *dev, u8 port,
+ 				      bool *vlan_offload_disabled)
+ {
+@@ -3230,6 +3241,7 @@ int mlx4_get_is_vlan_offload_disabled(st
+ 	return err;
+ }
+ EXPORT_SYMBOL(mlx4_get_is_vlan_offload_disabled);
++#endif
+ 
+ void mlx4_replace_zero_macs(struct mlx4_dev *dev)
+ {

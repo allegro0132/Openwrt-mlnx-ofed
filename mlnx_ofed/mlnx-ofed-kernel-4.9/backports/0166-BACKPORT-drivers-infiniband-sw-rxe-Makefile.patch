@@ -1,0 +1,18 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/sw/rxe/Makefile
+
+Change-Id: I5fff10f5d4d0b71fadb8aefd0ec9e51fe8a5388b
+---
+ drivers/infiniband/sw/rxe/Makefile | 1 +
+ 1 file changed, 1 insertion(+)
+
+--- a/drivers/infiniband/sw/rxe/Makefile
++++ b/drivers/infiniband/sw/rxe/Makefile
+@@ -37,6 +37,7 @@ rdma_rxe-y := \
+ 	rxe_qp.o \
+ 	rxe_cq.o \
+ 	rxe_mr.o \
++	rxe_dma.o \
+ 	rxe_opcode.o \
+ 	rxe_mmap.o \
+ 	rxe_icrc.o \

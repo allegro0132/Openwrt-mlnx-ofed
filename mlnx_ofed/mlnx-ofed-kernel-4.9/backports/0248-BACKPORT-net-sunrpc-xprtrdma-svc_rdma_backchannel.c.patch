@@ -1,0 +1,136 @@
+From: Vasily Philipov <vasilyf@mellanox.com>
+Subject: [PATCH] BACKPORT: net/sunrpc/xprtrdma/svc_rdma_backchannel.c
+
+Change-Id: I2918626fce7723bf2a26ad02f91656e11660b4d4
+Signed-off-by: Vasily Philipov <vasilyf@mellanox.com>
+---
+ net/sunrpc/xprtrdma/svc_rdma_backchannel.c | 55 ++++++++++++++++++++++++++++++
+ 1 file changed, 55 insertions(+)
+
+--- a/net/sunrpc/xprtrdma/svc_rdma_backchannel.c
++++ b/net/sunrpc/xprtrdma/svc_rdma_backchannel.c
+@@ -8,7 +8,10 @@
+ #include <linux/sunrpc/svc_rdma.h>
+ 
+ #include "xprt_rdma.h"
++
++#ifdef HAVE_TRACE_RPCRDMA_H
+ #include <trace/events/rpcrdma.h>
++#endif
+ 
+ #define RPCDBG_FACILITY	RPCDBG_SVCXPRT
+ 
+@@ -53,7 +56,14 @@ int svc_rdma_handle_bc_reply(struct rpc_
+ 	if (src->iov_len < 24)
+ 		goto out_shortreply;
+ 
++#ifdef HAVE_XPRT_QUEUE_LOCK
+ 	spin_lock(&xprt->queue_lock);
++#elif defined HAVE_RPC_XPRT_RECV_LOCK
++	spin_lock(&xprt->recv_lock);
++#else /* HAVE_XPRT_PIN_RQST is undefined in this case */
++	spin_lock_bh(&xprt->transport_lock);
++#endif
++
+ 	req = xprt_lookup_rqst(xprt, xid);
+ 	if (!req)
+ 		goto out_notfound;
+@@ -63,8 +73,17 @@ int svc_rdma_handle_bc_reply(struct rpc_
+ 	if (dst->iov_len < len)
+ 		goto out_unlock;
+ 	memcpy(dst->iov_base, p, len);
++
++#ifdef HAVE_XPRT_PIN_RQST
+ 	xprt_pin_rqst(req);
++
++#ifdef HAVE_XPRT_QUEUE_LOCK
+ 	spin_unlock(&xprt->queue_lock);
++#else
++	spin_unlock(&xprt->recv_lock);
++#endif
++
++#endif /* HAVE_XPRT_PIN_RQST */
+ 
+ 	credits = be32_to_cpup(rdma_resp + 2);
+ 	if (credits == 0)
+@@ -72,18 +91,37 @@ int svc_rdma_handle_bc_reply(struct rpc_
+ 	else if (credits > r_xprt->rx_buf.rb_bc_max_requests)
+ 		credits = r_xprt->rx_buf.rb_bc_max_requests;
+ 
++#if defined(HAVE_RPC_XPRT_RECV_LOCK)|| defined(HAVE_XPRT_QUEUE_LOCK)
+ 	spin_lock_bh(&xprt->transport_lock);
++#endif
+ 	xprt->cwnd = credits << RPC_CWNDSHIFT;
++#if defined(HAVE_RPC_XPRT_RECV_LOCK)|| defined(HAVE_XPRT_QUEUE_LOCK)
+ 	spin_unlock_bh(&xprt->transport_lock);
++#endif
+ 
++#ifdef HAVE_XPRT_PIN_RQST
++#ifdef HAVE_XPRT_QUEUE_LOCK
+ 	spin_lock(&xprt->queue_lock);
++#else
++	spin_lock(&xprt->recv_lock);
++#endif
++#endif /* HAVE_XPRT_PIN_RQST */
+ 	ret = 0;
+ 	xprt_complete_rqst(req->rq_task, rcvbuf->len);
++
++#ifdef HAVE_XPRT_PIN_RQST
+ 	xprt_unpin_rqst(req);
++#endif
+ 	rcvbuf->len = 0;
+ 
+ out_unlock:
++#ifdef HAVE_XPRT_QUEUE_LOCK
+ 	spin_unlock(&xprt->queue_lock);
++#elif defined HAVE_RPC_XPRT_RECV_LOCK
++	spin_unlock(&xprt->recv_lock);
++#else
++	spin_unlock_bh(&xprt->transport_lock);
++#endif
+ out:
+ 	return ret;
+ 
+@@ -211,8 +249,14 @@ drop_connection:
+  * connection.
+  */
+ static int
++#ifdef HAVE_XPRT_OPS_SEND_REQUEST_RQST_ARG
+ xprt_rdma_bc_send_request(struct rpc_rqst *rqst)
+ {
++#else
++xprt_rdma_bc_send_request(struct rpc_task *task)
++{
++	struct rpc_rqst *rqst = task->tk_rqstp;
++#endif
+ 	struct svc_xprt *sxprt = rqst->rq_xprt->bc_xprt;
+ 	struct svcxprt_rdma *rdma;
+ 	int ret;
+@@ -252,16 +296,27 @@ xprt_rdma_bc_put(struct rpc_xprt *xprt)
+ 	xprt_free(xprt);
+ }
+ 
++#ifdef HAVE_RPC_XPRT_OPS_CONST
+ static const struct rpc_xprt_ops xprt_rdma_bc_procs = {
++#else
++static struct rpc_xprt_ops xprt_rdma_bc_procs = {
++#endif
+ 	.reserve_xprt		= xprt_reserve_xprt_cong,
+ 	.release_xprt		= xprt_release_xprt_cong,
+ 	.alloc_slot		= xprt_alloc_slot,
++#ifdef HAVE_RPC_XPRT_OPS_FREE_SLOT
+ 	.free_slot		= xprt_free_slot,
++#endif
+ 	.release_request	= xprt_release_rqst_cong,
+ 	.buf_alloc		= xprt_rdma_bc_allocate,
+ 	.buf_free		= xprt_rdma_bc_free,
+ 	.send_request		= xprt_rdma_bc_send_request,
++#ifdef HAVE_RPC_XPRT_OPS_SET_RETRANS_TIMEOUT
++	.set_retrans_timeout	= xprt_set_retrans_timeout_def,
++#endif
++#ifdef HAVE_RPC_XPRT_OPS_WAIT_FOR_REPLY_REQUEST
+ 	.wait_for_reply_request	= xprt_wait_for_reply_request_def,
++#endif
+ 	.close			= xprt_rdma_bc_close,
+ 	.destroy		= xprt_rdma_bc_put,
+ 	.print_stats		= xprt_rdma_print_stats

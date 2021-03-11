@@ -1,0 +1,171 @@
+.TH MLX4_EN 7 "01/21/2011" "Mellanox Technologies"
+.\" Name
+.SH Name
+mlx4_en \- Mellanox ConnectX 10GigE device driver
+.\" Synopsis
+.SH SYNOPSIS
+.B insmod mlx4_core.ko; insmod mlx4_en.ko
+.RB [ <parameter>=\c
+.IR <value> ]
+.br
+.B modprobe mlx4_en
+.RB [ <parameter>=\c
+.IR <value> ]
+.br
+.\" Description
+.SH Description
+The driver is intended for adapter cards that identify on the PCI bus as having
+one of the following PCI Device IDs (decimal):
+25408, 25418, 25448, 26418, 26448, 26428, 25458, 26458, 26468, 26438, 26478 and 26488.
+.PP
+The driver includes 2 kernel modules: \fBmlx4_core\fP and \fBmlx4_en\fP.
+.PP
+.IB mlx4_core
+Handles low-level functions like device initialization and firmware
+commands processing. It also controls resource allocation so that
+InfiniBand, Ethernet and FC functions can share a device without
+interfering with each other.
+.PP
+.IB mlx4_en
+Handles Ethernet specific functions and plugs into the netdev mid-layer.
+.\"
+.\" Driver Capabilities
+.SH Driver Capabilities
+The MLNX_EN driver release exposes the following capabilities:
+.P
+- Single/Dual port
+.P
+- Up to 16 Rx queues per port
+.P
+- 16 Tx queues per port
+.P
+- Rx steering mode: Receive Core Affinity (RCA)
+.P
+- MSI-X or INTx
+.P
+- Adaptive interrupt moderation
+.P
+- HW Tx/Rx checksum calculation
+.P
+- Large Send Offload (i.e., TCP Segmentation Offload)
+.P
+- Large Receive Offload
+.P
+- IP Reassembly Offload
+.P
+- Multi-core NAPI support
+.P
+- VLAN Tx/Rx acceleration (HW VLAN stripping/insertion)
+.P
+- HW VLAN filtering
+.P
+- HW multicast filtering
+.P
+- Ethtool support
+.P
+- Net device statistics
+.\"
+.\" Software Dependencies
+.SH Software Dependencies
+The mlx4_en driver cannot coexist with OFED software on the same machine.
+Hence, when installing MLNX_EN all OFED packages must be removed.
+.\"
+.\" Module Parameters
+.SH Module Parameters
+The driver has several module parameters. The parameters can be set during driver load in two ways:
+.TP
+1. Add the parameter and its value when loading the driver:
+.B modprobe mlx4_en <parameter>=<value>
+.TP
+2. Add a line to \fI /etc/modprobe.conf\fP:
+.B options mlx4_en <parameter>=<value>
+.PP
+The parameters are:
+.TP
+.B inline_thold\fP: The max packet size in (bytes) for which the packet is copied to the send buffer.
+Range is 0 to 104, default value is 104.
+.TP
+.B num_rx_rings\fP: Total number of RX Rings (default 16, range 1-16, power of 2)
+.TP
+.B udp_rss\fP: Enable RSS for incomming UDP traffic or disabled (0) (enabled by default for support devices)
+.TP
+.B num_lro\fP: Number of different LRO sessions that can be held at the same time for each ring.
+Range is 0 (LRO disabled) to 32. The default value is 32 sessions.
+.TP
+.B use_tx_polling\fP: Use polling for TX processing (default 1), otherwise TX completions are handled from interrupt context.
+.TP
+.B enable_sys_tune\fP: Tune the cpu's for better performance (default 0)
+
+.\"
+.\" Driver usage
+.SH Ethernet Driver Usage and Configuration
+To assign an IP address to the interface run: \fB#> ifconfig eth<x> <ip>\fP, 
+where 'x' is the OS assigned interface number.
+.TP
+To check driver and device information run: 
+.B #> ethtool -i eth<x>
+.TP
+Example:
+.B #> ethtool -i eth2
+.PP
+.B		driver: mlx4_en (MT_0DD0120009_CX3)
+.PP
+.B		version: 1.5.7 (Nov 2011)
+.PP
+.B		firmware-version: 2.10.2000
+.PP
+.B		bus-info: 0000:1a:00.0
+.TP
+To query stateless offload status run: 
+.B #> ethtool -k eth<x>
+.TP
+To set stateless offload status run: 
+.B #> ethtool -K eth<x> [rx on|off] [tx on|off] [sg on|off] [tso on|off] [lro on|off]
+.TP
+To query interrupt coalescing settings run: 
+.B #> ethtool -c eth<x>
+.TP
+By default, the driver uses adaptive interrupt moderation for the receive path, which adjusts the moderation time to the traffic pattern. To enable/disable adaptive interrupt moderation use the following command:
+.B #>ethtool -C eth<x> adaptive-rx on|off
+.TP
+Above an upper limit of packet rate, adaptive moderation will set the moderation time to its highest value. Below a lower limit of packet rate, the moderation time will be set to its lowest value. To set the values for packet rate limits and for moderation time high and low values, use the following command:
+.B #> ethtool -C eth<x> [pkt-rate-low N] [pkt-rate-high N] [rx-usecs-low N] [rx-usecs-high N]
+.TP
+To set interrupt coalescing settings when adaptive moderation is disabled, use:
+.B #> ethtool -C eth<x> [rx-usecs N] [rx-frames N]
+.PP
+Note: usec settings correspond to the time to wait after the *last* packet is
+sent/received before triggering an interrupt.
+.TP
+To query pause frame settings run:
+.B #> ethtool -a eth<x>
+.TP
+To set pause frame settings run:
+.B #> ethtool -A eth<x> [rx on|off] [tx on|off]
+.TP
+To query ring size values run:
+.B #> ethtool -g eth<x>
+.TP
+To modify rings size run:
+.B #> ethtool -G eth<x> [rx <N>] [tx <N>]
+.PP
+RX ring size values are 128 to 8192, default is 1024. TX ring size values are 64 to 8192, default is 1024.
+.TP
+To obtain additional device statistics run:
+.B #> ethtool -S eth<x>
+.TP
+To perform a self diagnostics test run:
+.B #> ethtool -t eth<x>
+.PP
+.\" AUTHOR part
+.\"
+.SH AUTHOR
+Yevgeny Petrilin \- yevgenyp@mellanox.com
+.\"
+.\" SEE ALSO part
+.\"
+.SH SEE ALSO
+.BR ifconfig (8),
+.BR insmod (8),
+.BR modprobe.conf (5),
+.BR ethtool (8).

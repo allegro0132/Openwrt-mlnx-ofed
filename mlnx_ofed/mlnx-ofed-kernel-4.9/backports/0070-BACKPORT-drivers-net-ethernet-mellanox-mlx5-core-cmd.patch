@@ -1,0 +1,180 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx5/core/cmd.c
+
+Change-Id: Iae7431d219f8a38726ea7f9f1475e3ff0a6d247f
+---
+ drivers/net/ethernet/mellanox/mlx5/core/cmd.c | 62 +++++++++++++++++++++++++++
+ 1 file changed, 62 insertions(+)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/cmd.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/cmd.c
+@@ -785,7 +785,11 @@ static int mlx5_cmd_check(struct mlx5_co
+ 	if (!uid &&
+ 	    opcode != MLX5_CMD_OP_DESTROY_MKEY &&
+ 	    !(opcode == MLX5_CMD_OP_ALLOC_MEMIC && status == MLX5_CMD_STAT_NO_RES_ERR))
++#ifdef dev_err_ratelimited
+ 		mlx5_core_err_rl(dev,
++#else
++		mlx5_core_err(dev,
++#endif
+ 			"%s(0x%x) op_mod(0x%x) failed, status %s(0x%x), syndrome (0x%x)\n",
+ 			mlx5_command_str(opcode), opcode, op_mod,
+ 			cmd_status_str(status), status, syndrome);
+@@ -953,7 +957,11 @@ static void cmd_work_handler(struct work
+ 	lay->status_own = CMD_OWNER_HW;
+ 	set_signature(ent, !cmd->checksum_disabled);
+ 	dump_command(dev, ent, 1);
++#ifdef HAVE_KTIME_GET_NS
+ 	ent->ts1 = ktime_get_ns();
++#else
++	ktime_get_ts(&ent->ts1);
++#endif
+ 	cmd_mode = cmd->mode;
+ 	set_bit(MLX5_CMD_ENT_STATE_PENDING_COMP, &ent->state);
+ 
+@@ -1095,6 +1103,9 @@ static int mlx5_cmd_invoke(struct mlx5_c
+ 	struct mlx5_cmd *cmd = &dev->cmd;
+ 	struct mlx5_cmd_work_ent *ent;
+ 	struct mlx5_cmd_stats *stats;
++#ifndef HAVE_KTIME_GET_NS
++	ktime_t t1, t2, delta;
++#endif
+ 	int err = 0;
+ 	s64 ds;
+ 	u16 op;
+@@ -1134,7 +1145,14 @@ static int mlx5_cmd_invoke(struct mlx5_c
+ 	if (err == -ECANCELED)
+ 		goto out_free;
+ 
++#ifdef HAVE_KTIME_GET_NS
+ 	ds = ent->ts2 - ent->ts1;
++#else
++	t1 = timespec_to_ktime(ent->ts1);
++	t2 = timespec_to_ktime(ent->ts2);
++	delta = ktime_sub(t2, t1);
++	ds = ktime_to_ns(delta);
++#endif
+ 	op = MLX5_GET(mbox_in, in->first.data, opcode);
+ 	if (op < ARRAY_SIZE(cmd->stats)) {
+ 		stats = &cmd->stats[op];
+@@ -1263,13 +1281,22 @@ static struct mlx5_cmd_mailbox *alloc_cm
+ 	if (!mailbox)
+ 		return ERR_PTR(-ENOMEM);
+ 
++#ifdef HAVE_DMA_POOL_ZALLOC
+ 	mailbox->buf = dma_pool_zalloc(dev->cmd.pool, flags,
++#elif defined(HAVE_PCI_POOL_ZALLOC)
++	mailbox->buf = pci_pool_zalloc(dev->cmd.pool, flags,
++#else
++	mailbox->buf = pci_pool_alloc(dev->cmd.pool, flags,
++#endif
+ 				       &mailbox->dma);
+ 	if (!mailbox->buf) {
+ 		mlx5_core_dbg(dev, "failed allocation\n");
+ 		kfree(mailbox);
+ 		return ERR_PTR(-ENOMEM);
+ 	}
++#if !defined(HAVE_PCI_POOL_ZALLOC) && !defined(HAVE_DMA_POOL_ZALLOC)
++	memset(mailbox->buf, 0, sizeof(struct mlx5_cmd_prot_block));
++#endif
+ 	mailbox->next = NULL;
+ 
+ 	return mailbox;
+@@ -1491,10 +1518,15 @@ static int create_debugfs_files(struct m
+ 	if (!dbg->dbg_outlen)
+ 		goto err_dbg;
+ 
++#ifndef HAVE_DEBUGFS_CREATE_U8_RET_STRUCT
++	debugfs_create_u8("status", 0600, dbg->dbg_root,
++		          &dbg->status);
++#else
+ 	dbg->dbg_status = debugfs_create_u8("status", 0600, dbg->dbg_root,
+ 					    &dbg->status);
+ 	if (!dbg->dbg_status)
+ 		goto err_dbg;
++#endif
+ 
+ 	dbg->dbg_run = debugfs_create_file("run", 0200, dbg->dbg_root, dev, &fops);
+ 	if (!dbg->dbg_run)
+@@ -1589,6 +1621,9 @@ static void mlx5_cmd_comp_handler(struct
+ 	struct mlx5_cmd *cmd = &dev->cmd;
+ 	struct mlx5_cmd_work_ent *ent;
+ 	mlx5_cmd_cbk_t callback;
++#ifndef HAVE_KTIME_GET_NS
++	ktime_t t1, t2, delta;
++#endif
+ 	void *context;
+ 	int err;
+ 	int i;
+@@ -1627,12 +1662,20 @@ static void mlx5_cmd_comp_handler(struct
+ 			}
+ 
+ 			if (ent->callback)
++#ifdef HAVE___CANCEL_DELAYED_WORK
++				__cancel_delayed_work(&ent->cb_timeout_work);
++#else
+ 				cancel_delayed_work(&ent->cb_timeout_work);
++#endif
+ 			if (ent->page_queue)
+ 				sem = &cmd->pages_sem;
+ 			else
+ 				sem = &cmd->sem;
++#ifdef HAVE_KTIME_GET_NS
+ 			ent->ts2 = ktime_get_ns();
++#else
++			ktime_get_ts(&ent->ts2);
++#endif
+ 			if (!pci_channel_offline(dev->pdev) &&
+ 			    dev->state != MLX5_DEVICE_STATE_INTERNAL_ERROR) {
+ 				memcpy(ent->out->first.data, ent->lay->out, sizeof(ent->lay->out));
+@@ -1657,7 +1700,14 @@ static void mlx5_cmd_comp_handler(struct
+ 				free_ent(cmd, ent->idx);
+ 
+ 			if (ent->callback) {
++#ifdef HAVE_KTIME_GET_NS
+ 				ds = ent->ts2 - ent->ts1;
++#else
++				t1 = timespec_to_ktime(ent->ts1);
++				t2 = timespec_to_ktime(ent->ts2);
++				delta = ktime_sub(t2, t1);
++				ds = ktime_to_ns(delta);
++#endif
+ 				if (ent->op < ARRAY_SIZE(cmd->stats)) {
+ 					stats = &cmd->stats[ent->op];
+ 					spin_lock_irqsave(&stats->lock, flags);
+@@ -2024,7 +2074,11 @@ static int alloc_cmd_page(struct mlx5_co
+ {
+ 	struct device *ddev = dev->device;
+ 
++#ifdef HAVE_DMA_ZALLOC_COHERENT
++	cmd->cmd_alloc_buf = dma_zalloc_coherent(ddev, MLX5_ADAPTER_PAGE_SIZE,
++#else
+ 	cmd->cmd_alloc_buf = dma_alloc_coherent(ddev, MLX5_ADAPTER_PAGE_SIZE,
++#endif
+ 						&cmd->alloc_dma, GFP_KERNEL);
+ 	if (!cmd->cmd_alloc_buf)
+ 		return -ENOMEM;
+@@ -2039,7 +2093,11 @@ static int alloc_cmd_page(struct mlx5_co
+ 
+ 	dma_free_coherent(ddev, MLX5_ADAPTER_PAGE_SIZE, cmd->cmd_alloc_buf,
+ 			  cmd->alloc_dma);
++#ifdef HAVE_DMA_ZALLOC_COHERENT
++	cmd->cmd_alloc_buf = dma_zalloc_coherent(ddev,
++#else
+ 	cmd->cmd_alloc_buf = dma_alloc_coherent(ddev,
++#endif
+ 						2 * MLX5_ADAPTER_PAGE_SIZE - 1,
+ 						&cmd->alloc_dma, GFP_KERNEL);
+ 	if (!cmd->cmd_alloc_buf)
+@@ -2391,7 +2449,11 @@ static ssize_t real_miss_store(struct de
+ 	return count;
+ }
+ 
++#ifdef CONFIG_COMPAT_IS_CONST_KOBJECT_SYSFS_OPS
+ static const struct sysfs_ops cmd_cache_sysfs_ops = {
++#else
++static struct sysfs_ops cmd_cache_sysfs_ops = {
++#endif
+ 	.show = cmd_cache_attr_show,
+ 	.store = cmd_cache_attr_store,
+ };

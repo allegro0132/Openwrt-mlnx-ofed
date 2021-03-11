@@ -1,0 +1,50 @@
+#!/bin/bash -x
+#
+# Copyright (c) 2017 Mellanox Technologies. All rights reserved.
+#
+# This Software is licensed under one of the following licenses:
+#
+# 1) under the terms of the "Common Public License 1.0" a copy of which is
+#    available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/cpl.php.
+#
+# 2) under the terms of the "The BSD License" a copy of which is
+#    available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/bsd-license.php.
+#
+# 3) under the terms of the "GNU General Public License (GPL) Version 2" a
+#    copy of which is available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/gpl-license.php.
+#
+# Licensee has the right to choose one of the above licenses.
+#
+# Redistributions of source code must retain the above copyright
+# notice and one of the license notices.
+#
+# Redistributions in binary form must reproduce both the above copyright
+# notice, one of the license notices in the documentation
+# and/or other materials provided with the distribution.
+#
+
+DEST_DIR=$1; shift
+
+with_mlx4=${with_mlx4:-1}
+with_mlx5=${with_mlx5:-1}
+
+# is systemd supported and systemctl exists
+if (systemctl 2>/dev/null | grep -qw "\\-\.mount" 2>/dev/null); then
+	install -d ${DEST_DIR}/lib/systemd/system
+	install -m 0644 scripts/mlnx-en.d.service ${DEST_DIR}/lib/systemd/system
+	# Prevent ordering cycle on sysinit.target/start
+	sed -i 's/ sysinit.target//g' ${DEST_DIR}/lib/systemd/system/mlnx-en.d.service
+fi
+
+# Update mlnx-en.conf
+config=${DEST_DIR}/etc/mlnx-en.conf
+if [ $with_mlx4 -eq 0 ]; then
+	sed -i 's/MLX4_LOAD=yes/MLX4_LOAD=no/' $config
+fi
+
+if [ $with_mlx5 -eq 0 ]; then
+	sed -i 's/MLX5_LOAD=yes/MLX5_LOAD=no/' $config
+fi

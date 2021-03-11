@@ -1,0 +1,20 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx5/core/lib/eq.h
+
+Change-Id: I8fe999a2b2a061ccb371d9d7bafc6d22ba97266e
+---
+ drivers/net/ethernet/mellanox/mlx5/core/lib/eq.h | 3 +++
+ 1 file changed, 3 insertions(+)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/lib/eq.h
++++ b/drivers/net/ethernet/mellanox/mlx5/core/lib/eq.h
+@@ -93,6 +93,9 @@ void mlx5_debug_eq_remove(struct mlx5_co
+ int mlx5_eq_debugfs_init(struct mlx5_core_dev *dev);
+ void mlx5_eq_debugfs_cleanup(struct mlx5_core_dev *dev);
+ 
++#ifndef HAVE_PCI_IRQ_API
++u32 mlx5_get_msix_vec(struct mlx5_core_dev *dev, int vecidx);
++#endif
+ /* This function should only be called after mlx5_cmd_force_teardown_hca */
+ void mlx5_core_eq_free_irqs(struct mlx5_core_dev *dev);
+ #ifdef CONFIG_RFS_ACCEL

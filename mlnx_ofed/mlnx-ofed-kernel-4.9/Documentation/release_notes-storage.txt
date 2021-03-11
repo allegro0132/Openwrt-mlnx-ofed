@@ -1,0 +1,170 @@
+                        Mellanox Technologies
+
+===============================================================================
+                    Mellanox Storage drivers for Linux
+                      Versions:
+                        iSER-1.6
+                        SRP-1.5
+                      Last Modified on Mar, 2015
+===============================================================================
+
+===============================================================================
+Table of Contents
+===============================================================================
+1. Overview
+2. Changes in This Release
+3. Supported Platforms and Operating Systems
+4. Supported HCAs
+5. Resolved Issues
+6. Known Issues
+
+===============================================================================
+1. Overview
+===============================================================================
+These are the release notes of Mellanox OFED Storage drivers for Linux
+
+===============================================================================
+2. Changes in This Release
+===============================================================================
+iSER:
+ - DIF GA
+ - Connection management refactor
+ - Bug fixes
+ - IO path enhancements
+
+SRP:
+ - FRWR support
+ - Merge with upstream
+ - Bug fixes
+
+===============================================================================
+3. Supported Platforms and Operating Systems
+===============================================================================
+Supported platform is x86_64.
+Requires MLNX-OFED-2.4-1.0.0
+
+Full Cycle:
+    RHEL7.0: iSER RoCE, iSER IB, SRP
+    RHEL6.4: iSER IB, iSER RoCE
+    RHEL6.5: iSER IB, iSER RoCE, SRP
+    RHEL6.6: iSER IB, iSER RoCE, SRP
+    OEL6.6 (UEK kernel): iSER IB, iSER RoCE
+    Sles12: iSER IB, iSER RoCE, SRP
+    Ubuntu14.04: iSER IB, iSER RoCE
+
+Partial Cycle:
+    RHEL7.0 INBOX*: iSER RoCE, iSER IB, SRP
+    RHEL6.3: iSER IB, iSER RoCE, SRP
+    RHEL6.4: SRP
+    OEL6.4 (UEK kernel): iSER IB, SRP
+    OEL6.5 (UEK kernel): iSER IB, iSER RoCE, SRP
+    OEL6.6 (UEK kernel): SRP
+    Sles11SP2: iSER IB, iSER RoCE, SRP
+    Sles11SP3: iSER IB, iSER RoCE, SRP
+    Ubuntu12.04.4 (kernel 3.11): iSER IB, iSER RoCE, SRP
+    Ubuntu14.04: SRP
+    FC19: iSER IB, iSER RoCE, SRP
+    FC21: iSER IB, iSER RoCE, SRP
+
+
+* INBOX means the distro RDMA stack, without the need to install MLNX_OFED.
+
+===============================================================================
+4. Supported HCAs
+===============================================================================
+* Connect-IB FW version 10.10.3000 and above.
+* ConnectX-3 (+Pro) FW version 2.31.5050 and above.
+
+For official firmware versions please see:
+http://www.mellanox.com/content/pages.php?pg=firmware_download
+
+===============================================================================
+5. Resolved Issues
+===============================================================================
+iSER:
+ - SM LID reassign during traffic on OEL6.4 uek kernel with virtual function
+   generates soft lockup trace. (#435775)
+
+ - Unloading iser module during connection establishment sequence may cause
+   unexpected behavior. (#439838)
+
+ - RoCE: port toggling may cause traffic disruption on the un-toggled port.
+   (#440464)
+
+ - RoCE: unloading mlx4_en while open iser sessions exist may cause resources
+   not to be freed until unloading mlx4_ib as well. (#440458)
+
+ - Multi-target login-logout loop may result in failure (system hang)
+   (#441104)
+
+ - Sles12 inbox: PI module parameters are missing (PI not enabled) (#441106)
+
+===============================================================================
+6. Known Issues
+===============================================================================
+ - SLES12: multipathd may segfault
+
+SRP:
+ -  The driver is tested with Storage target vendors recommendations for
+    multipath.conf extensions (ZFS, DDN, TMS, Nimbus, NetApp).
+
+ - Unloading ib_srp with many open sessions while ports are down may take long
+   time (#440471)
+
+ - MLNX_OFED SRP installation breaks ibmvstgt and ibmvscsi symbol resolution
+   in RHEL7.0 (#517635)
+
+ - SRP interop known issues:
+
+    * DDN Storage Fusion 10000 target
+      - DDN does not accept non-default P_Key connection establishment.
+        (#489952)
+
+    * Oracle Sun ZFS storage 7420
+      - ZFS does not accept non-default P_Key connection establishment.
+        (#489952)
+
+    * Ungraceful power cycle of an initiator connected with Targets DDN,
+      Nimbus, NetApp, may result in temporary "stale connection" messages
+      when initiator reconnects. (#517641)
+
+ - SLESL12: Lost path to storage as result of read only file system (#466595)
+
+ - FW timeout during IO and then FW reset will cause ib interfaces to fail
+   (#510515)
+
+iSER:
+ -  On SLES, the ib_iser module does not get loaded on boot. (#489944)
+    workaround:
+    Add a dummy interface using iscsiadm:
+    - iscsiadm -m iface -I ib_iser -o new
+    - iscsiadm -m iface -I ib_iser -o update -n iface.transport_name -v ib_iser
+
+ - Ubuntu12 requires updating the user space open-iscsi to v2.0.873 (#489947)
+
+ - Initiator does not respect interface parameter while logging in. (#489945)
+   workaround:
+   config each interface on different subnet.
+
+ - ZFS appliance: connection establishment occurs twice which may cause iSER
+   to log a stack trace. (#489940)
+
+ - iscsid may hang if target crashes during logout sequence.
+   reproducible with TCP. (#489942)
+
+ - iscsid v2.0.873 can enter an endless loop on bind error. (#489941)
+   fix pending:
+   https://groups.google.com/forum/#!searchin/open-iscsi/Fix$20infinite$20loop$20when$20conn$20/open-iscsi/zgLXgf28LVE/e3qkz8ZzwHMJ
+
+ - SLES12: login with PI disabled, followed by a logout and re-login with PI
+   enabled without flushing multipath might cause the block layer to panic.
+   (#440756)
+
+ - Rarely In IB device catastrophic error scenario iscsi/iser initator might
+   not fully recover and result in a hang. (#489943)
+
+ - Ubuntu14.04: Stress login/logout might cause block layer to invoke a WARN
+   trace (#453232)
+
+ - Initiator can't recover a session after FW internal error on target while
+   there is an open session (#501232)

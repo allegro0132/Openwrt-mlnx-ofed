@@ -1,0 +1,23 @@
+From: Bodong Wang <bodong@mellanox.com>
+Subject: [PATCH] BACKPORT: include/net/geneve.h
+
+Change-Id: Iace8312567d710a9fe6abe30448fb445e4ad9956
+---
+ include/net/geneve.h | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+--- a/include/net/geneve.h
++++ b/include/net/geneve.h
+@@ -12,4 +12,12 @@
+ #define GENEVE_UDP_PORT		6081
+ #endif
+ 
++#ifndef HAVE_NETIF_IS_GENEVE
++static inline bool netif_is_geneve(const struct net_device *dev)
++{
++	return dev->rtnl_link_ops &&
++		!strcmp(dev->rtnl_link_ops->kind, "geneve");
++}
++#endif
++
+ #endif /*ifdef_COMPAT__NET_GENEVE_H */

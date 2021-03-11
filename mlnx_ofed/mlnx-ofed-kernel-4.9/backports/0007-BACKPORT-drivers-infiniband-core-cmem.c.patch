@@ -1,0 +1,58 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/core/cmem.c
+
+Change-Id: I8ac021e7716151d64d8ea541895af2166e3befd9
+---
+ drivers/infiniband/core/cmem.c | 24 ++++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+--- a/drivers/infiniband/core/cmem.c
++++ b/drivers/infiniband/core/cmem.c
+@@ -28,7 +28,15 @@ static void ib_cmem_release(struct kref
+ 	  */
+ 	if (current->mm) {
+ 		ntotal_pages = PAGE_ALIGN(cmem->length) >> PAGE_SHIFT;
++#ifdef HAVE_PINNED_VM
++#ifdef HAVE_ATOMIC_PINNED_VM
+ 		atomic64_sub(ntotal_pages, &current->mm->pinned_vm);
++#else
++		current->mm->pinned_vm -= ntotal_pages;
++#endif /*HAVE_ATOMIC_PINNED_VM*/
++#else
++		current->mm->locked_vm -= ntotal_pages;
++#endif
+ 	}
+ 	kfree(cmem);
+ }
+@@ -185,7 +193,15 @@ struct ib_cmem *ib_cmem_alloc_contiguous
+ 	  * with mm->mmap_sem held for writing.
+ 	  * No need to lock
+ 	  */
++#ifdef HAVE_PINNED_VM
++#ifdef HAVE_ATOMIC_PINNED_VM
+ 	locked     = ntotal_pages + atomic64_read(&current->mm->pinned_vm);
++#else
++	locked     = ntotal_pages + current->mm->pinned_vm;
++#endif /*HAVE_ATOMIC_PINNED_VM*/
++#else
++	locked     = ntotal_pages + current->mm->locked_vm;
++#endif
+ 	lock_limit = rlimit(RLIMIT_MEMLOCK) >> PAGE_SHIFT;
+ 
+ 	if ((locked > lock_limit) && !capable(CAP_IPC_LOCK))
+@@ -235,7 +251,15 @@ struct ib_cmem *ib_cmem_alloc_contiguous
+ 	}
+ 
+ 	cmem->length = total_size;
++#ifdef HAVE_PINNED_VM
++#ifdef HAVE_ATOMIC_PINNED_VM
+ 	atomic64_set(&current->mm->pinned_vm, locked);
++#else
++	current->mm->pinned_vm = locked;
++#endif /*HAVE_ATOMIC_PINNED_VM*/
++#else
++	current->mm->locked_vm = locked;
++#endif
+ 	return cmem;
+ 
+ err_alloc:

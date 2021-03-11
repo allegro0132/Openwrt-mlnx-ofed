@@ -1,0 +1,363 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx4/en_tx.c
+
+Change-Id: I7b0e13987edd7b33e4027ecdb2d902efc0d04aea
+---
+ drivers/net/ethernet/mellanox/mlx4/en_tx.c | 132 ++++++++++++++++++++-
+ 1 file changed, 129 insertions(+), 3 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx4/en_tx.c
++++ b/drivers/net/ethernet/mellanox/mlx4/en_tx.c
+@@ -31,6 +31,9 @@
+  *
+  */
+ 
++#ifdef HAVE_XDP_BUFF
++#include <linux/bpf.h>
++#endif
+ #include <asm/page.h>
+ #include <linux/mlx4/cq.h>
+ #include <linux/slab.h>
+@@ -43,7 +46,6 @@
+ #include <linux/ip.h>
+ #include <linux/ipv6.h>
+ #include <linux/moduleparam.h>
+-
+ #include "mlx4_en.h"
+ 
+ int mlx4_en_create_tx_ring(struct mlx4_en_priv *priv,
+@@ -109,7 +111,11 @@ int mlx4_en_create_tx_ring(struct mlx4_e
+ 		goto err_hwq_res;
+ 	}
+ 
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 	err = mlx4_qp_alloc(mdev->dev, ring->qpn, &ring->sp_qp);
++#else
++	err = mlx4_qp_alloc(mdev->dev, ring->qpn, &ring->sp_qp, GFP_KERNEL);
++#endif
+ 	if (err) {
+ 		en_err(priv, "Failed allocating qp %d\n", ring->qpn);
+ 		goto err_reserve;
+@@ -324,7 +330,11 @@ u32 mlx4_en_free_tx_desc(struct mlx4_en_
+ 			}
+ 		}
+ 	}
++#ifdef HAVE_NAPI_CONSUME_SKB
+ 	napi_consume_skb(skb, napi_mode);
++#else
++	dev_kfree_skb(skb);
++#endif
+ 
+ 	return tx_info->nr_txbb;
+ }
+@@ -407,7 +417,13 @@ bool _mlx4_en_process_tx_cq(struct net_d
+ 	if (unlikely(!priv->port_up))
+ 		return true;
+ 
++#ifdef HAVE_NETDEV_TXQ_BQL_PREFETCHW
+ 	netdev_txq_bql_complete_prefetchw(ring->tx_queue);
++#else
++#ifdef CONFIG_BQL
++	prefetchw(&ring->tx_queue->dql.limit);
++#endif
++#endif
+ 
+ 	index = cons_index & size_mask;
+ 	cqe = mlx4_en_get_cqe(buf, index, priv->cqe_size) + factor;
+@@ -425,7 +441,11 @@ bool _mlx4_en_process_tx_cq(struct net_d
+ 		 * make sure we read the CQE after we read the
+ 		 * ownership bit
+ 		 */
++#ifdef dma_rmb
+ 		dma_rmb();
++#else
++		rmb();
++#endif
+ 
+ 		if (unlikely((cqe->owner_sr_opcode & MLX4_CQE_OPCODE_MASK) ==
+ 			     MLX4_CQE_OPCODE_ERROR)) {
+@@ -623,9 +643,11 @@ static int get_real_size(const struct sk
+ 
+ 	if (shinfo->gso_size) {
+ 		*inline_ok = false;
++#ifdef HAVE_SKB_INNER_TRANSPORT_HEADER
+ 		if (skb->encapsulation)
+ 			*lso_header_size = (skb_inner_transport_header(skb) - skb->data) + inner_tcp_hdrlen(skb);
+ 		else
++#endif
+ 			*lso_header_size = skb_transport_offset(skb) + tcp_hdrlen(skb);
+ 		real_size = CTRL_SIZE + shinfo->nr_frags * DS_SIZE +
+ 			ALIGN(*lso_header_size + 4, DS_SIZE);
+@@ -699,21 +721,54 @@ static void build_inline_wqe(struct mlx4
+ 				       skb_frag_size(&shinfo->frags[0]));
+ 		}
+ 
++#ifdef dma_wmb
+ 		dma_wmb();
++#else
++		wmb();
++#endif
+ 		inl->byte_count = cpu_to_be32(1 << 31 | (skb->len - spc));
+ 	}
+ }
+ 
++#ifdef NDO_SELECT_QUEUE_HAS_3_PARMS_NO_FALLBACK
++u16 mlx4_en_select_queue(struct net_device *dev, struct sk_buff *skb,
++		       struct net_device *sb_dev)
++
++#elif defined(NDO_SELECT_QUEUE_HAS_ACCEL_PRIV) || defined(HAVE_SELECT_QUEUE_FALLBACK_T)
++
+ u16 mlx4_en_select_queue(struct net_device *dev, struct sk_buff *skb,
+-			 struct net_device *sb_dev)
++#ifdef HAVE_SELECT_QUEUE_FALLBACK_T
++#ifdef HAVE_SELECT_QUEUE_NET_DEVICE
++		       struct net_device *sb_dev,
++#else
++		       void *accel_priv,
++#endif /* HAVE_SELECT_QUEUE_NET_DEVICE */
++		       select_queue_fallback_t fallback)
++#else
++		       void *accel_priv)
++#endif
++#else /* NDO_SELECT_QUEUE_HAS_ACCEL_PRIV || HAVE_SELECT_QUEUE_FALLBACK_T */
++u16 mlx4_en_select_queue(struct net_device *dev, struct sk_buff *skb)
++#endif
+ {
+ 	struct mlx4_en_priv *priv = netdev_priv(dev);
+ 	u16 rings_p_up = priv->num_tx_rings_p_up;
+ 
+ 	if (netdev_get_num_tc(dev))
++#ifdef NDO_SELECT_QUEUE_HAS_3_PARMS_NO_FALLBACK
+ 		return netdev_pick_tx(dev, skb, NULL);
+ 
+ 	return netdev_pick_tx(dev, skb, NULL) % rings_p_up;
++#elif defined (HAVE_SELECT_QUEUE_FALLBACK_T_3_PARAMS)
++ 		return fallback(dev, skb, NULL);
++ 
++ 	return fallback(dev, skb, NULL) % rings_p_up;
++#else
++		return fallback(dev, skb);
++
++	return fallback(dev, skb) % rings_p_up;
++#endif
++
+ }
+ 
+ static void mlx4_bf_copy(void __iomem *dst, const void *src,
+@@ -753,7 +808,11 @@ static void mlx4_en_tx_write_desc(struct
+ 		/* Ensure new descriptor hits memory
+ 		 * before setting ownership of this descriptor to HW
+ 		 */
++#ifdef dma_wmb
+ 		dma_wmb();
++#else
++		wmb();
++#endif
+ 		tx_desc->ctrl.owner_opcode = op_own;
+ 
+ 		wmb();
+@@ -768,12 +827,18 @@ static void mlx4_en_tx_write_desc(struct
+ 		/* Ensure new descriptor hits memory
+ 		 * before setting ownership of this descriptor to HW
+ 		 */
++#ifdef dma_wmb
+ 		dma_wmb();
++#else
++		wmb();
++#endif
+ 		tx_desc->ctrl.owner_opcode = op_own;
+ 		if (send_doorbell)
+ 			mlx4_en_xmit_doorbell(ring);
++#ifdef HAVE_SK_BUFF_XMIT_MORE
+ 		else
+ 			ring->xmit_more++;
++#endif
+ 	}
+ }
+ 
+@@ -792,9 +857,13 @@ static bool mlx4_en_build_dma_wqe(struct
+ 
+ 	/* Map fragments if any */
+ 	for (i_frag = shinfo->nr_frags - 1; i_frag >= 0; i_frag--) {
++#ifdef HAVE_SKB_FRAG_OFF
++		const skb_frag_t *frag = &shinfo->frags[i_frag];
++#else
+ 		const struct skb_frag_struct *frag;
+ 
+ 		frag = &shinfo->frags[i_frag];
++#endif
+ 		byte_count = skb_frag_size(frag);
+ 		dma = skb_frag_dma_map(ddev, frag,
+ 				       0, byte_count,
+@@ -804,7 +873,11 @@ static bool mlx4_en_build_dma_wqe(struct
+ 
+ 		data->addr = cpu_to_be64(dma);
+ 		data->lkey = mr_key;
++#ifdef dma_wmb
+ 		dma_wmb();
++#else
++		wmb();
++#endif
+ 		data->byte_count = cpu_to_be32(byte_count);
+ 		--data;
+ 	}
+@@ -821,7 +894,11 @@ static bool mlx4_en_build_dma_wqe(struct
+ 
+ 		data->addr = cpu_to_be64(dma);
+ 		data->lkey = mr_key;
++#ifdef dma_wmb
+ 		dma_wmb();
++#else
++		wmb();
++#endif
+ 		data->byte_count = cpu_to_be32(byte_count);
+ 	}
+ 	/* tx completion can avoid cache line miss for common cases */
+@@ -891,9 +968,12 @@ static inline netdev_tx_t __mlx4_en_xmit
+ 
+ 	bf_ok = ring->bf_enabled;
+ 	if (skb_vlan_tag_present(skb)) {
++#ifdef HAVE_NETIF_F_HW_VLAN_STAG_RX
+ 		u16 vlan_proto;
++#endif
+ 
+ 		qpn_vlan.vlan_tag = cpu_to_be16(skb_vlan_tag_get(skb));
++#ifdef HAVE_NETIF_F_HW_VLAN_STAG_RX
+ 		vlan_proto = be16_to_cpu(skb->vlan_proto);
+ 		if (vlan_proto == ETH_P_8021AD)
+ 			qpn_vlan.ins_vlan = MLX4_WQE_CTRL_INS_SVLAN;
+@@ -901,10 +981,19 @@ static inline netdev_tx_t __mlx4_en_xmit
+ 			qpn_vlan.ins_vlan = MLX4_WQE_CTRL_INS_CVLAN;
+ 		else
+ 			qpn_vlan.ins_vlan = 0;
++#else
++		qpn_vlan.ins_vlan = MLX4_WQE_CTRL_INS_CVLAN;
++#endif
+ 		bf_ok = false;
+ 	}
+ 
++#ifdef HAVE_NETDEV_TXQ_BQL_PREFETCHW
+ 	netdev_txq_bql_enqueue_prefetchw(ring->tx_queue);
++#else
++#ifdef CONFIG_BQL
++	prefetchw(&ring->tx_queue->dql);
++#endif
++#endif
+ 
+ 	/* Track current inflight packets for performance analysis */
+ 	AVG_PERF_COUNTER(priv->pstats.inflight_avg,
+@@ -961,8 +1050,13 @@ static inline netdev_tx_t __mlx4_en_xmit
+ 	 */
+ 	tx_info->ts_requested = 0;
+ 	if (unlikely(ring->hwtstamp_tx_type == HWTSTAMP_TX_ON &&
++#ifndef HAVE_SKB_SHARED_INFO_UNION_TX_FLAGS
+ 		     shinfo->tx_flags & SKBTX_HW_TSTAMP)) {
+ 		shinfo->tx_flags |= SKBTX_IN_PROGRESS;
++#else
++		     shinfo->tx_flags.flags & SKBTX_HW_TSTAMP)) {
++		shinfo->tx_flags.flags |= SKBTX_IN_PROGRESS;
++#endif
+ 		tx_info->ts_requested = 1;
+ 	}
+ 
+@@ -970,11 +1064,16 @@ static inline netdev_tx_t __mlx4_en_xmit
+ 	 * whether LSO is used */
+ 	tx_desc->ctrl.srcrb_flags = priv->ctrl_flags;
+ 	if (likely(skb->ip_summed == CHECKSUM_PARTIAL)) {
++#ifdef HAVE_SK_BUFF_ENCAPSULATION
+ 		if (!skb->encapsulation)
+ 			tx_desc->ctrl.srcrb_flags |= cpu_to_be32(MLX4_WQE_CTRL_IP_CSUM |
+ 								 MLX4_WQE_CTRL_TCP_UDP_CSUM);
+ 		else
+ 			tx_desc->ctrl.srcrb_flags |= cpu_to_be32(MLX4_WQE_CTRL_IP_CSUM);
++#else
++		tx_desc->ctrl.srcrb_flags |= cpu_to_be32(MLX4_WQE_CTRL_IP_CSUM |
++							 MLX4_WQE_CTRL_TCP_UDP_CSUM);
++#endif
+ 		ring->tx_csum++;
+ 	}
+ 
+@@ -1020,11 +1119,15 @@ static inline netdev_tx_t __mlx4_en_xmit
+ 		ring->packets++;
+ 	}
+ 	ring->bytes += tx_info->nr_bytes;
++#if !defined(HAVE_NETDEV_TX_SEND_QUEUE) || !defined(HAVE_SK_BUFF_XMIT_MORE)
++	netdev_tx_sent_queue(ring->tx_queue, tx_info->nr_bytes);
++#endif
+ 	AVG_PERF_COUNTER(priv->pstats.tx_pktsz_avg, skb->len);
+ 
+ 	if (tx_info->inl)
+ 		build_inline_wqe(tx_desc, skb, shinfo, fragptr);
+ 
++#ifdef HAVE_SKB_INNER_NETWORK_HEADER
+ 	if (skb->encapsulation) {
+ 		union {
+ 			struct iphdr *v4;
+@@ -1042,6 +1145,7 @@ static inline netdev_tx_t __mlx4_en_xmit
+ 		else
+ 			op_own |= cpu_to_be32(MLX4_WQE_CTRL_IIP);
+ 	}
++#endif
+ 
+ 	ring->prod += nr_txbb;
+ 
+@@ -1058,9 +1162,21 @@ static inline netdev_tx_t __mlx4_en_xmit
+ 		ring->queue_stopped++;
+ 	}
+ 
++#ifdef HAVE_SK_BUFF_XMIT_MORE
++#ifdef HAVE_NETDEV_TX_SEND_QUEUE
+ 	send_doorbell = __netdev_tx_sent_queue(ring->tx_queue,
+ 					       tx_info->nr_bytes,
++#ifdef HAVE_NETDEV_XMIT_MORE
+ 					       netdev_xmit_more());
++#else
++					       skb->xmit_more);
++#endif
++#else
++	send_doorbell = !skb->xmit_more || netif_xmit_stopped(ring->tx_queue);
++#endif
++#else
++	send_doorbell = true;
++#endif
+ 
+ 	real_size = (real_size / 16) & 0x3f;
+ 
+@@ -1159,6 +1275,7 @@ void mlx4_en_init_tx_xdp_ring_descs(stru
+ 	}
+ }
+ 
++#ifdef HAVE_XDP_BUFF
+ netdev_tx_t mlx4_en_xmit_frame(struct mlx4_en_rx_ring *rx_ring,
+ 			       struct mlx4_en_rx_alloc *frame,
+ 			       struct mlx4_en_priv *priv, unsigned int length,
+@@ -1201,7 +1318,11 @@ netdev_tx_t mlx4_en_xmit_frame(struct ml
+ 					 length, PCI_DMA_TODEVICE);
+ 
+ 	data->addr = cpu_to_be64(dma + frame->page_offset);
++#ifdef dma_wmb
+ 	dma_wmb();
++#else
++	wmb();
++#endif
+ 	data->byte_count = cpu_to_be32(length);
+ 
+ 	/* tx completion can avoid cache line miss for common cases */
+@@ -1218,7 +1339,11 @@ netdev_tx_t mlx4_en_xmit_frame(struct ml
+ 	/* Ensure new descriptor hits memory
+ 	 * before setting ownership of this descriptor to HW
+ 	 */
+-	dma_wmb();
++#ifdef dma_wmb
++		dma_wmb();
++#else
++		wmb();
++#endif
+ 	tx_desc->ctrl.owner_opcode = op_own;
+ 	ring->xmit_more++;
+ 
+@@ -1232,3 +1357,4 @@ tx_drop_count:
+ tx_drop:
+ 	return NETDEV_TX_BUSY;
+ }
++#endif

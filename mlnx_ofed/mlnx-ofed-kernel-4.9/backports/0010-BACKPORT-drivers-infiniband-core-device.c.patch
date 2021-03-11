@@ -1,0 +1,528 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/core/device.c
+
+Change-Id: I8d810fb71e2704f5f751d860e4f450c87a49fd5d
+---
+ drivers/infiniband/core/device.c | 226 ++++++++++++++++++++++++++++---
+ 1 file changed, 209 insertions(+), 17 deletions(-)
+
+--- a/drivers/infiniband/core/device.c
++++ b/drivers/infiniband/core/device.c
+@@ -46,6 +46,7 @@
+ #include <rdma/ib_addr.h>
+ #include <rdma/ib_cache.h>
+ #include <rdma/rdma_counter.h>
++#include <linux/sizes.h>
+ 
+ #include "core_priv.h"
+ #include "restrack.h"
+@@ -53,6 +54,9 @@
+ MODULE_AUTHOR("Roland Dreier");
+ MODULE_DESCRIPTION("core kernel InfiniBand API");
+ MODULE_LICENSE("Dual BSD/GPL");
++#ifdef RETPOLINE_MLNX
++MODULE_INFO(retpoline, "Y");
++#endif
+ 
+ struct workqueue_struct *ib_comp_wq;
+ struct workqueue_struct *ib_comp_unbound_wq;
+@@ -117,7 +121,9 @@ unsigned int rdma_dev_net_id;
+  * because we can't get the locking right using the existing net ns list. We
+  * would require a init_net callback after the list is updated.
+  */
++#if defined(HAVE_STRUCT_CLASS_NS_TYPE) && defined(HAVE_PERENT_OPERATIONS_ID)
+ static DEFINE_XARRAY_FLAGS(rdma_nets, XA_FLAGS_ALLOC);
++#endif
+ /*
+  * rwsem to protect accessing the rdma_nets xarray entries.
+  */
+@@ -188,14 +194,21 @@ static DECLARE_HASHTABLE(ndev_hash, 5);
+ static void free_netdevs(struct ib_device *ib_dev);
+ static void ib_unregister_work(struct work_struct *work);
+ static void __ib_unregister_device(struct ib_device *device);
++#ifdef HAVE_REGISTER_LSM_NOTIFIER
+ static int ib_security_change(struct notifier_block *nb, unsigned long event,
+ 			      void *lsm_data);
+ static void ib_policy_change_task(struct work_struct *work);
+ static DECLARE_WORK(ib_policy_change_work, ib_policy_change_task);
+ 
++static struct notifier_block ibdev_lsm_nb = {
++	.notifier_call = ib_security_change,
++};
++#endif
++
+ static void __ibdev_printk(const char *level, const struct ib_device *ibdev,
+ 			   struct va_format *vaf)
+ {
++#ifdef HAVE_DEV_PRINTK_EMIT
+ 	if (ibdev && ibdev->dev.parent)
+ 		dev_printk_emit(level[1] - '0',
+ 				ibdev->dev.parent,
+@@ -204,7 +217,9 @@ static void __ibdev_printk(const char *l
+ 				dev_name(ibdev->dev.parent),
+ 				dev_name(&ibdev->dev),
+ 				vaf);
+-	else if (ibdev)
++	else
++#endif
++	if (ibdev)
+ 		printk("%s%s: %pV",
+ 		       level, dev_name(&ibdev->dev), vaf);
+ 	else
+@@ -253,12 +268,10 @@ define_ibdev_printk_level(ibdev_warn, KE
+ define_ibdev_printk_level(ibdev_notice, KERN_NOTICE);
+ define_ibdev_printk_level(ibdev_info, KERN_INFO);
+ 
+-static struct notifier_block ibdev_lsm_nb = {
+-	.notifier_call = ib_security_change,
+-};
+-
++#if defined(HAVE_STRUCT_CLASS_NS_TYPE) && defined(HAVE_PERENT_OPERATIONS_ID)
+ static int rdma_dev_change_netns(struct ib_device *device, struct net *cur_net,
+ 				 struct net *net);
++#endif
+ 
+ /* Pointer to the RCU head at the start of the ib_port_data array */
+ struct ib_port_data_rcu {
+@@ -449,17 +462,32 @@ static int alloc_name(struct ib_device *
+ {
+ 	struct ib_device *device;
+ 	unsigned long index;
++	int i;
++#ifdef HAVE_IDA_ALLOC
+ 	struct ida inuse;
+ 	int rc;
+-	int i;
++#else
++	unsigned long *inuse;
+ 
++	inuse = (unsigned long *) get_zeroed_page(GFP_KERNEL);
++	if (!inuse)
++		return -ENOMEM;
++#endif
++#ifdef HAVE_LOCKUP_ASSERT_HELD_EXCLUSIVE
+ 	lockdep_assert_held_exclusive(&devices_rwsem);
++#elif defined(HAVE_LOCKUP_ASSERT_HELD_WRITE)
++	lockdep_assert_held_write(&devices_rwsem);
++#endif
++
++#ifdef HAVE_IDA_ALLOC
+ 	ida_init(&inuse);
++#endif
+ 	xa_for_each (&devices, index, device) {
+ 		char buf[IB_DEVICE_NAME_MAX];
+ 
+ 		if (sscanf(dev_name(&device->dev), name, &i) != 1)
+ 			continue;
++#ifdef HAVE_IDA_ALLOC
+ 		if (i < 0 || i >= INT_MAX)
+ 			continue;
+ 		snprintf(buf, sizeof buf, name, i);
+@@ -479,6 +507,17 @@ static int alloc_name(struct ib_device *
+ out:
+ 	ida_destroy(&inuse);
+ 	return rc;
++#else
++	if (i < 0 || i >= PAGE_SIZE * 8)
++		continue;
++	snprintf(buf, sizeof buf, name, i);
++	if (!strcmp(buf, dev_name(&device->dev)))
++		set_bit(i, inuse);
++	}
++	i = find_first_zero_bit(inuse, PAGE_SIZE * 8);
++	free_page((unsigned long) inuse);
++	return dev_set_name(&ibdev->dev, name, i);
++#endif
+ }
+ 
+ static void ib_device_release(struct device *device)
+@@ -514,6 +553,7 @@ static int ib_device_uevent(struct devic
+ 	return 0;
+ }
+ 
++#if defined(HAVE_STRUCT_CLASS_NS_TYPE) && defined(HAVE_PERENT_OPERATIONS_ID)
+ static const void *net_namespace(struct device *d)
+ {
+ 	struct ib_core_device *coredev =
+@@ -521,13 +561,16 @@ static const void *net_namespace(struct
+ 
+ 	return read_pnet(&coredev->rdma_net);
+ }
++#endif
+ 
+ static struct class ib_class = {
+ 	.name    = "infiniband",
+ 	.dev_release = ib_device_release,
+ 	.dev_uevent = ib_device_uevent,
++#if defined(HAVE_STRUCT_CLASS_NS_TYPE) && defined(HAVE_PERENT_OPERATIONS_ID)
+ 	.ns_type = &net_ns_type_operations,
+ 	.namespace = net_namespace,
++#endif
+ };
+ 
+ static void rdma_init_coredev(struct ib_core_device *coredev,
+@@ -801,6 +844,7 @@ void ib_get_device_fw_str(struct ib_devi
+ }
+ EXPORT_SYMBOL(ib_get_device_fw_str);
+ 
++#ifdef HAVE_REGISTER_LSM_NOTIFIER
+ static void ib_policy_change_task(struct work_struct *work)
+ {
+ 	struct ib_device *dev;
+@@ -837,7 +881,9 @@ static int ib_security_change(struct not
+ 
+ 	return NOTIFY_OK;
+ }
++#endif /* HAVE_REGISTER_LSM_NOTIFIER */
+ 
++#if defined(HAVE_STRUCT_CLASS_NS_TYPE) && defined(HAVE_PERENT_OPERATIONS_ID)
+ static void compatdev_release(struct device *dev)
+ {
+ 	struct ib_core_device *cdev =
+@@ -1121,6 +1167,11 @@ static __net_init int rdma_dev_init_net(
+ 
+ 	return ret;
+ }
++#else
++int rdma_compatdev_set(u8 enable) { return -EOPNOTSUPP; }
++static int add_compat_devs(struct ib_device *device) {return 0;}
++static void remove_compat_devs(struct ib_device *device) {}
++#endif
+ 
+ /*
+  * Assign the unique string device name and the unique device index. This is
+@@ -1158,6 +1209,7 @@ out:
+ 
+ static void setup_dma_device(struct ib_device *device)
+ {
++#ifdef HAVE_DEVICE_DMA_OPS
+ 	struct device *parent = device->dev.parent;
+ 
+ 	WARN_ON_ONCE(device->dma_device);
+@@ -1189,6 +1241,15 @@ static void setup_dma_device(struct ib_d
+ 		WARN_ON_ONCE(!parent);
+ 		device->dma_device = parent;
+ 	}
++#else /* HAVE_DEVICE_DMA_OPS */
++	WARN_ON_ONCE(!device->dev.parent && !device->dma_device);
++	WARN_ON_ONCE(device->dev.parent && device->dma_device
++		     && device->dev.parent != device->dma_device);
++	if (!device->dev.parent)
++		device->dev.parent = device->dma_device;
++	if (!device->dma_device)
++		device->dma_device = device->dev.parent;
++#endif /* HAVE_DEVICE_DMA_OPS */
+ 	/* Setup default max segment size for all IB devices */
+ 	dma_set_max_seg_size(device->dma_device, SZ_2G);
+ 
+@@ -1320,6 +1381,10 @@ int ib_register_device(struct ib_device
+ 	if (ret)
+ 		return ret;
+ 
++#if !defined(HAVE_VLAN_DEV_GET_EGRESS_QOS_MASK)
++	mutex_init(&device->skprio2up.lock);
++#endif
++
+ 	ret = setup_device(device);
+ 	if (ret)
+ 		return ret;
+@@ -1331,8 +1396,9 @@ int ib_register_device(struct ib_device
+ 		return ret;
+ 	}
+ 
++#ifdef HAVE_CGROUP_RDMA_H
+ 	ib_device_register_rdmacg(device);
+-
++#endif
+ 	rdma_counter_init(device);
+ 
+ 	/*
+@@ -1396,7 +1462,9 @@ dev_cleanup:
+ 	device_del(&device->dev);
+ cg_cleanup:
+ 	dev_set_uevent_suppress(&device->dev, false);
++#ifdef HAVE_CGROUP_RDMA_H
+ 	ib_device_unregister_rdmacg(device);
++#endif
+ 	ib_cache_cleanup_one(device);
+ 	return ret;
+ }
+@@ -1423,7 +1491,9 @@ static void __ib_unregister_device(struc
+ 
+ 	ib_device_unregister_sysfs(ib_dev);
+ 	device_del(&ib_dev->dev);
++#ifdef HAVE_CGROUP_RDMA_H
+ 	ib_device_unregister_rdmacg(ib_dev);
++#endif
+ 	ib_cache_cleanup_one(ib_dev);
+ 
+ 	/*
+@@ -1541,6 +1611,7 @@ static void ib_unregister_work(struct wo
+  * Drivers using this API must use ib_unregister_driver before module unload
+  * to ensure that all scheduled unregistrations have completed.
+  */
++#ifdef CONFIG_INFINIBAND_ON_DEMAND_PAGING
+ void ib_unregister_device_queued(struct ib_device *ib_dev)
+ {
+ 	WARN_ON(!refcount_read(&ib_dev->refcount));
+@@ -1550,6 +1621,7 @@ void ib_unregister_device_queued(struct
+ 		put_device(&ib_dev->dev);
+ }
+ EXPORT_SYMBOL(ib_unregister_device_queued);
++#endif
+ 
+ /*
+  * The caller must pass in a device that has the kref held and the refcount
+@@ -1626,16 +1698,23 @@ int ib_device_set_netns_put(struct sk_bu
+ 	struct net *net;
+ 	int ret;
+ 
++#ifndef HAVE_GET_NET_NS_BY_FD_EXPORTED
++	ret = -EOPNOTSUPP;
++	goto net_err;
++#else
+ 	net = get_net_ns_by_fd(ns_fd);
+ 	if (IS_ERR(net)) {
+ 		ret = PTR_ERR(net);
+ 		goto net_err;
+ 	}
++#endif
+ 
++#ifdef HAVE_NETLINK_NS_CAPABLE
+ 	if (!netlink_ns_capable(skb, net->user_ns, CAP_NET_ADMIN)) {
+ 		ret = -EPERM;
+ 		goto ns_err;
+ 	}
++#endif
+ 
+ 	/*
+ 	 * Currently supported only for those providers which support
+@@ -1664,12 +1743,14 @@ net_err:
+ 	return ret;
+ }
+ 
++#if defined(HAVE_STRUCT_CLASS_NS_TYPE) && defined(HAVE_PERENT_OPERATIONS_ID)
+ static struct pernet_operations rdma_dev_net_ops = {
+ 	.init = rdma_dev_init_net,
+ 	.exit = rdma_dev_exit_net,
+ 	.id = &rdma_dev_net_id,
+ 	.size = sizeof(struct rdma_dev_net),
+ };
++#endif
+ 
+ static int assign_client_id(struct ib_client *client)
+ {
+@@ -2074,9 +2155,10 @@ struct ib_device *ib_device_get_by_netde
+ {
+ 	struct ib_device *res = NULL;
+ 	struct ib_port_data *cur;
++        COMPAT_HL_NODE;
+ 
+ 	rcu_read_lock();
+-	hash_for_each_possible_rcu (ndev_hash, cur, ndev_hash_link,
++	compat_hash_for_each_possible_rcu (ndev_hash, cur, ndev_hash_link,
+ 				    (uintptr_t)ndev) {
+ 		if (rcu_access_pointer(cur->netdev) == ndev &&
+ 		    (driver_id == RDMA_DRIVER_UNKNOWN ||
+@@ -2297,6 +2379,46 @@ int ib_find_gid(struct ib_device *device
+ }
+ EXPORT_SYMBOL(ib_find_gid);
+ 
++#if !defined(HAVE_VLAN_DEV_GET_EGRESS_QOS_MASK)
++int ib_set_skprio2up(struct ib_device *device,
++		     u8 port_num, u8 prio, u8 up)
++{
++	if (prio >= NUM_SKPRIO ||
++	    up >= NUM_UP ||
++	    port_num > MAX_PORTS || port_num == 0)
++		return -EINVAL;
++
++	if (rdma_port_get_link_layer(device, port_num) !=
++			IB_LINK_LAYER_ETHERNET)
++		return -ENOTSUPP;
++
++	mutex_lock(&device->skprio2up.lock);
++	device->skprio2up.map[port_num - 1][prio] = up;
++	mutex_unlock(&device->skprio2up.lock);
++	return 0;
++}
++EXPORT_SYMBOL(ib_set_skprio2up);
++
++int ib_get_skprio2up(struct ib_device *device,
++		     u8 port_num, u8 prio, u8 *up)
++{
++	if (prio >= NUM_SKPRIO ||
++	    !up ||
++	    port_num > MAX_PORTS || port_num == 0)
++		return -EINVAL;
++
++	if (rdma_port_get_link_layer(device, port_num) !=
++			IB_LINK_LAYER_ETHERNET)
++		return -ENOTSUPP;
++
++	mutex_lock(&device->skprio2up.lock);
++	*up = device->skprio2up.map[port_num - 1][prio];
++	mutex_unlock(&device->skprio2up.lock);
++	return 0;
++}
++EXPORT_SYMBOL(ib_get_skprio2up);
++#endif
++
+ /**
+  * ib_find_pkey - Returns the PKey table index where a specified
+  *   PKey value occurs.
+@@ -2558,17 +2680,62 @@ static int __init ib_core_init(void)
+ 	if (!ib_wq)
+ 		return -ENOMEM;
+ 
++#if defined(HAVE_ALLOC_WORKQUEUE)
+ 	ib_comp_wq = alloc_workqueue("ib-comp-wq",
+-			WQ_HIGHPRI | WQ_MEM_RECLAIM | WQ_SYSFS, 0);
++			0
++#if defined(HAVE_WQ_HIGHPRI)
++			| WQ_HIGHPRI
++#endif
++#if defined(HAVE_WQ_MEM_RECLAIM)
++			| WQ_MEM_RECLAIM
++#endif
++#if defined(HAVE_WQ_SYSFS)
++			| WQ_SYSFS
++#endif
++#if defined(HAVE_WQ_NON_REENTRANT)
++			| WQ_NON_REENTRANT
++#endif
++			, 0);
++#else /* HAVE_ALLOC_WORKQUEUE */
++	/* For older kernels that do not have WQ_NON_REENTRANT and
++	 * alloc_workqueue
++	 */
++	ib_comp_wq = create_singlethread_workqueue("ib-comp-wq");
++#endif /* HAVE_ALLOC_WORKQUEUE */
+ 	if (!ib_comp_wq) {
+ 		ret = -ENOMEM;
+ 		goto err;
+ 	}
+ 
++#if defined(HAVE_ALLOC_WORKQUEUE)
+ 	ib_comp_unbound_wq =
+ 		alloc_workqueue("ib-comp-unb-wq",
+-				WQ_UNBOUND | WQ_HIGHPRI | WQ_MEM_RECLAIM |
+-				WQ_SYSFS, WQ_UNBOUND_MAX_ACTIVE);
++			0
++#if defined(HAVE_WQ_UNBOUND)
++			| WQ_UNBOUND
++#endif
++#if defined(HAVE_WQ_HIGHPRI)
++			| WQ_HIGHPRI
++#endif
++#if defined(HAVE_WQ_MEM_RECLAIM)
++			| WQ_MEM_RECLAIM
++#endif
++#if defined(HAVE_WQ_SYSFS)
++			| WQ_SYSFS
++#endif
++#if defined(HAVE_WQ_NON_REENTRANT)
++			| WQ_NON_REENTRANT
++#endif
++#if defined(HAVE_WQ_UNBOUND) && defined(HAVE_WQ_UNBOUND_MAX_ACTIVE)
++			, WQ_UNBOUND_MAX_ACTIVE);
++#else
++			, 0);
++#endif
++#else /* HAVE_ALLOC_WORKQUEUE */
++	/* For older kernels that do not have alloc_workqueue
++	 */
++	ib_comp_unbound_wq = create_singlethread_workqueue("ib-comp-unb-wq");
++#endif /* HAVE_ALLOC_WORKQUEUE */
+ 	if (!ib_comp_unbound_wq) {
+ 		ret = -ENOMEM;
+ 		goto err_comp;
+@@ -2580,6 +2747,14 @@ static int __init ib_core_init(void)
+ 		goto err_comp_unbound;
+ 	}
+ 
++#if !(defined(HAVE_STRUCT_CLASS_NS_TYPE) && defined(HAVE_PERENT_OPERATIONS_ID))
++	ret = rdma_nl_init();
++	if (ret) {
++		pr_warn("Couldn't init IB netlink interface: err %d\n", ret);
++		goto err_sysfs;
++	}
++#endif
++
+ 	ret = addr_init();
+ 	if (ret) {
+ 		pr_warn("Could't init IB address resolution\n");
+@@ -2598,33 +2773,44 @@ static int __init ib_core_init(void)
+ 		goto err_mad;
+ 	}
+ 
+-	ret = register_lsm_notifier(&ibdev_lsm_nb);
+-	if (ret) {
+-		pr_warn("Couldn't register LSM notifier. ret %d\n", ret);
+-		goto err_sa;
+-	}
++#ifdef HAVE_REGISTER_LSM_NOTIFIER
++       ret = register_lsm_notifier(&ibdev_lsm_nb);
++       if (ret) {
++       	pr_warn("Couldn't register LSM notifier. ret %d\n", ret);
++       	goto err_sa;
++       }
++#endif
+ 
++#if defined(HAVE_STRUCT_CLASS_NS_TYPE) && defined(HAVE_PERENT_OPERATIONS_ID)
+ 	ret = register_pernet_device(&rdma_dev_net_ops);
+ 	if (ret) {
+ 		pr_warn("Couldn't init compat dev. ret %d\n", ret);
+ 		goto err_compat;
+ 	}
+-
++#endif
+ 	nldev_init();
+ 	rdma_nl_register(RDMA_NL_LS, ibnl_ls_cb_table);
+ 	roce_gid_mgmt_init();
+ 
+ 	return 0;
+ 
++#if defined(HAVE_STRUCT_CLASS_NS_TYPE) && defined(HAVE_PERENT_OPERATIONS_ID)
+ err_compat:
++#endif
++#ifdef HAVE_REGISTER_LSM_NOTIFIER
+ 	unregister_lsm_notifier(&ibdev_lsm_nb);
+ err_sa:
+ 	ib_sa_cleanup();
++#endif
+ err_mad:
+ 	ib_mad_cleanup();
+ err_addr:
+ 	addr_cleanup();
+ err_ibnl:
++#if !(defined(HAVE_STRUCT_CLASS_NS_TYPE) && defined(HAVE_PERENT_OPERATIONS_ID))
++	rdma_nl_exit();
++err_sysfs:
++#endif
+ 	class_unregister(&ib_class);
+ err_comp_unbound:
+ 	destroy_workqueue(ib_comp_unbound_wq);
+@@ -2640,8 +2826,12 @@ static void __exit ib_core_cleanup(void)
+ 	roce_gid_mgmt_cleanup();
+ 	nldev_exit();
+ 	rdma_nl_unregister(RDMA_NL_LS);
++#if defined(HAVE_STRUCT_CLASS_NS_TYPE) && defined(HAVE_PERENT_OPERATIONS_ID)
+ 	unregister_pernet_device(&rdma_dev_net_ops);
++#endif
++#ifdef HAVE_REGISTER_LSM_NOTIFIER
+ 	unregister_lsm_notifier(&ibdev_lsm_nb);
++#endif
+ 	ib_sa_cleanup();
+ 	ib_mad_cleanup();
+ 	addr_cleanup();
+@@ -2651,7 +2841,9 @@ static void __exit ib_core_cleanup(void)
+ 	destroy_workqueue(ib_comp_wq);
+ 	/* Make sure that any pending umem accounting work is done. */
+ 	destroy_workqueue(ib_wq);
++#ifdef CONFIG_INFINIBAND_ON_DEMAND_PAGING
+ 	flush_workqueue(system_unbound_wq);
++#endif
+ 	WARN_ON(!xa_empty(&clients));
+ 	WARN_ON(!xa_empty(&devices));
+ }

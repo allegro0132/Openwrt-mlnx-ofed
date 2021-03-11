@@ -1,0 +1,34 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx4/en_cq.c
+
+Change-Id: Ib59913b2d8f67a30d60105a8f1db021207786ccb
+---
+ drivers/net/ethernet/mellanox/mlx4/en_cq.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+--- a/drivers/net/ethernet/mellanox/mlx4/en_cq.c
++++ b/drivers/net/ethernet/mellanox/mlx4/en_cq.c
+@@ -155,9 +155,11 @@ int mlx4_en_activate_cq(struct mlx4_en_p
+ 			err = 0;
+ 		}
+ 
++#if defined(HAVE_IRQ_DESC_GET_IRQ_DATA) && defined(HAVE_IRQ_TO_DESC_EXPORTED)
+ 		cq->irq_desc =
+ 			irq_to_desc(mlx4_eq_get_irq(mdev->dev,
+ 						    cq->vector));
++#endif
+ 	} else {
+ 		/* For TX we use the same irq per
+ 		ring we assigned for the RX    */
+@@ -187,7 +189,11 @@ int mlx4_en_activate_cq(struct mlx4_en_p
+ 	switch (cq->type) {
+ 	case TX:
+ 		cq->mcq.comp = mlx4_en_tx_irq;
++#ifdef HAVE_NETIF_TX_NAPI_ADD
+ 		netif_tx_napi_add(cq->dev, &cq->napi,
++#else
++		netif_napi_add(cq->dev, &cq->napi,
++#endif
+ 				  vgtp_cq ? mlx4_en_vgtp_poll_tx_cq :
+ 				  mlx4_en_poll_tx_cq,
+ 				  NAPI_POLL_WEIGHT);

@@ -1,0 +1,231 @@
+From: Mikhael Goikhman <migo@mellanox.com>
+Subject: [PATCH] BACKPORT:
+ drivers/net/ethernet/mellanox/mlx5/core/ipoib/ipoib.c
+
+Change-Id: Ic84a3d313a65222f34d2ff07f8d7eec8ea8a3ca5
+---
+ .../net/ethernet/mellanox/mlx5/core/ipoib/ipoib.c  | 104 ++++++++++++++++++++-
+ 1 file changed, 101 insertions(+), 3 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/ipoib/ipoib.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/ipoib/ipoib.c
+@@ -48,11 +48,22 @@ static const struct net_device_ops mlx5i
+ 	.ndo_open                = mlx5i_open,
+ 	.ndo_stop                = mlx5i_close,
+ 	.ndo_tx_timeout          = mlx5i_tx_timeout,
++#if defined(HAVE_NDO_GET_STATS64) || defined(HAVE_NDO_GET_STATS64_RET_VOID)
+ 	.ndo_get_stats64         = mlx5i_get_stats,
++#else
++	.ndo_get_stats           = mlx5i_get_stats,
++#endif
+ 	.ndo_init                = mlx5i_dev_init,
+ 	.ndo_uninit              = mlx5i_dev_cleanup,
++#ifndef HAVE_NDO_CHANGE_MTU_EXTENDED
+ 	.ndo_change_mtu          = mlx5i_change_mtu,
++#else
++	.extended.ndo_change_mtu          = mlx5i_change_mtu,
++#endif
+ 	.ndo_do_ioctl            = mlx5i_ioctl,
++#ifdef HAVE_NET_DEVICE_OPS_EXTENDED
++	.ndo_size = sizeof(struct net_device_ops),
++#endif
+ };
+ 
+ /* IPoIB mlx5 netdev profile */
+@@ -69,11 +80,35 @@ static void mlx5i_build_nic_params(struc
+ 		MLX5E_PARAMS_MINIMUM_LOG_RQ_SIZE :
+ 		MLX5I_PARAMS_DEFAULT_LOG_RQ_SIZE;
+ 
+-	params->lro_en = false;
++#ifdef CONFIG_COMPAT_LRO_ENABLED_IPOIB
++	params->lro_en = true;
++	MLX5E_SET_PFLAG(params, MLX5E_PFLAG_HWLRO, false);
++#else
++       params->lro_en = false;
++#endif
+ 	params->hard_mtu = MLX5_IB_GRH_BYTES + MLX5_IPOIB_HARD_LEN;
+ 	params->tunneled_offload_en = false;
+ }
+ 
++#ifdef CONFIG_COMPAT_LRO_ENABLED_IPOIB
++void set_lro_features_bit(struct mlx5e_priv *priv)
++{
++	u64 hw_support_lro = 0;
++#ifdef HAVE_NETDEV_HW_FEATURES
++	hw_support_lro = priv->netdev->hw_features & NETIF_F_RXCSUM;
++#else
++	hw_support_lro = priv->netdev->features & NETIF_F_RXCSUM;
++#endif
++	if (hw_support_lro) {
++		priv->netdev->features |= NETIF_F_LRO;
++#ifdef HAVE_NETDEV_HW_FEATURES
++		priv->netdev->hw_features |= NETIF_F_LRO;
++		priv->netdev->wanted_features |= NETIF_F_LRO;
++#endif
++	}
++}
++#endif
++
+ static void mlx5i_tx_timeout_work(struct work_struct *work)
+ {
+ 	struct mlx5e_priv *priv = container_of(work, struct mlx5e_priv,
+@@ -100,6 +135,9 @@ int mlx5i_init(struct mlx5_core_dev *mde
+ {
+ 	struct mlx5e_priv *priv  = mlx5i_epriv(netdev);
+ 	int err;
++#ifndef HAVE_NET_DEVICE_MIN_MAX_MTU
++	u16 max_mtu;
++#endif
+ 
+ 	err = mlx5e_netdev_init(netdev, priv, mdev, profile, ppriv);
+ 	if (err)
+@@ -107,7 +145,12 @@ int mlx5i_init(struct mlx5_core_dev *mde
+ 
+ 	INIT_WORK(&priv->tx_timeout_work, mlx5i_tx_timeout_work);
+ 	mlx5e_set_netdev_mtu_boundaries(priv);
++#ifdef HAVE_NET_DEVICE_MIN_MAX_MTU
+ 	netdev->mtu = netdev->max_mtu;
++#else
++	mlx5_query_port_max_mtu(mdev, &max_mtu, 1);
++	netdev->mtu = max_mtu;
++#endif
+ 
+ 	mlx5e_build_nic_params(priv, &priv->rss_params, &priv->channels.params,
+ 			       netdev->mtu);
+@@ -116,6 +159,7 @@ int mlx5i_init(struct mlx5_core_dev *mde
+ 	mlx5e_timestamp_init(priv);
+ 
+ 	/* netdev init */
++#ifdef HAVE_NETDEV_HW_FEATURES
+ 	netdev->hw_features    |= NETIF_F_SG;
+ 	netdev->hw_features    |= NETIF_F_IP_CSUM;
+ 	netdev->hw_features    |= NETIF_F_IPV6_CSUM;
+@@ -123,10 +167,32 @@ int mlx5i_init(struct mlx5_core_dev *mde
+ 	netdev->hw_features    |= NETIF_F_TSO;
+ 	netdev->hw_features    |= NETIF_F_TSO6;
+ 	netdev->hw_features    |= NETIF_F_RXCSUM;
++#ifdef HAVE_NETIF_F_RXHASH
+ 	netdev->hw_features    |= NETIF_F_RXHASH;
++#endif
++#else /* HAVE_NETDEV_HW_FEATURES */
++	netdev->features    |= NETIF_F_SG;
++	netdev->features    |= NETIF_F_IP_CSUM;
++	netdev->features    |= NETIF_F_IPV6_CSUM;
++	netdev->features    |= NETIF_F_GRO;
++	netdev->features    |= NETIF_F_TSO;
++	netdev->features    |= NETIF_F_TSO6;
++	netdev->features    |= NETIF_F_RXCSUM;
++#ifdef HAVE_NETIF_F_RXHASH
++	netdev->features    |= NETIF_F_RXHASH;
++#endif
++#endif /* HAVE_NETDEV_HW_FEATURES */
++#ifdef CONFIG_COMPAT_LRO_ENABLED_IPOIB
++	set_lro_features_bit(priv);
++#endif
+ 
+ 	netdev->netdev_ops = &mlx5i_netdev_ops;
++#ifndef HAVE_ETHTOOL_OPS_EXT
+ 	netdev->ethtool_ops = &mlx5i_ethtool_ops;
++#else
++	SET_ETHTOOL_OPS(netdev, &mlx5i_ethtool_ops);
++	set_ethtool_ops_ext(netdev, &mlx5i_ethtool_ops_ext);
++#endif
+ 
+ 	return 0;
+ }
+@@ -165,10 +231,20 @@ static void mlx5i_grp_sw_update_stats(st
+ 	memcpy(&priv->stats.sw, &s, sizeof(s));
+ }
+ 
++#ifdef HAVE_NDO_GET_STATS64_RET_VOID
+ void mlx5i_get_stats(struct net_device *dev, struct rtnl_link_stats64 *stats)
++#elif defined(HAVE_NDO_GET_STATS64)
++struct rtnl_link_stats64 * mlx5i_get_stats(struct net_device *dev,
++					   struct rtnl_link_stats64 *stats)
++#else
++struct net_device_stats * mlx5i_get_stats(struct net_device *dev)
++#endif
+ {
+ 	struct mlx5e_priv     *priv   = mlx5i_epriv(dev);
+ 	struct mlx5e_sw_stats *sstats = &priv->stats.sw;
++#if !defined(HAVE_NDO_GET_STATS64) && !defined(HAVE_NDO_GET_STATS64_RET_VOID)
++	struct net_device_stats *stats = &priv->netdev_stats;
++#endif
+ 
+ 	mlx5i_grp_sw_update_stats(priv);
+ 
+@@ -177,6 +253,10 @@ void mlx5i_get_stats(struct net_device *
+ 	stats->tx_packets = sstats->tx_packets;
+ 	stats->tx_bytes   = sstats->tx_bytes;
+ 	stats->tx_dropped = sstats->tx_queue_dropped;
++
++#ifndef HAVE_NDO_GET_STATS64_RET_VOID
++	return stats;
++#endif
+ }
+ 
+ int mlx5i_init_underlay_qp(struct mlx5e_priv *priv)
+@@ -338,7 +418,11 @@ static int mlx5i_create_flow_steering(st
+ 	if (err) {
+ 		netdev_err(priv->netdev, "Failed to create arfs tables, err=%d\n",
+ 			   err);
++#ifdef HAVE_NETDEV_HW_FEATURES
++#ifdef CONFIG_RFS_ACCEL
+ 		priv->netdev->hw_features &= ~NETIF_F_NTUPLE;
++#endif
++#endif
+ 	}
+ 
+ 	mlx5e_set_ttc_basic_params(priv, &ttc_params);
+@@ -534,9 +618,13 @@ int mlx5i_ioctl(struct net_device *dev,
+ 
+ 	switch (cmd) {
+ 	case SIOCSHWTSTAMP:
++#ifdef HAVE_SIOCGHWTSTAMP
+ 		return mlx5e_hwstamp_set(priv, ifr);
+ 	case SIOCGHWTSTAMP:
+ 		return mlx5e_hwstamp_get(priv, ifr);
++#else
++		return mlx5e_hwstamp_ioctl(priv, ifr);
++#endif
+ 	default:
+ 		return -EOPNOTSUPP;
+ 	}
+@@ -672,8 +760,14 @@ static int mlx5i_xmit(struct net_device
+ 	struct mlx5e_txqsq *sq   = epriv->txq2sq[skb_get_queue_mapping(skb)];
+ 	struct mlx5_ib_ah *mah   = to_mah(address);
+ 	struct mlx5i_priv *ipriv = epriv->ppriv;
+-
++#ifdef HAVE_NETDEV_XMIT_MORE
+ 	return mlx5i_sq_xmit(sq, skb, &mah->av, dqpn, ipriv->qkey, netdev_xmit_more());
++#elif defined(HAVE_SK_BUFF_XMIT_MORE)
++	return mlx5i_sq_xmit(sq, skb, &mah->av, dqpn, ipriv->qkey, skb->xmit_more);
++#else
++	return mlx5i_sq_xmit(sq, skb, &mah->av, dqpn, ipriv->qkey);
++#endif
++
+ }
+ 
+ static void mlx5i_set_pkey_index(struct net_device *netdev, int id)
+@@ -763,9 +857,10 @@ static int mlx5_rdma_setup_rn(struct ib_
+ 	rn->detach_mcast = mlx5i_detach_mcast;
+ 	rn->set_id = mlx5i_set_pkey_index;
+ 
++#ifdef HAVE_NET_DEVICE_NEEDS_FREE_NETDEV
+ 	netdev->priv_destructor = mlx5_rdma_netdev_free;
+ 	netdev->needs_free_netdev = 1;
+-
++#endif
+ 	return 0;
+ 
+ destroy_ht:
+@@ -793,6 +888,9 @@ int mlx5_rdma_rn_get_params(struct mlx5_
+ 		.rxqs = nch,
+ 		.param = mdev,
+ 		.initialize_rdma_netdev = mlx5_rdma_setup_rn,
++#ifndef HAVE_NET_DEVICE_NEEDS_FREE_NETDEV
++		.uninitialize_rdma_netdev = mlx5_rdma_netdev_free,
++#endif
+ 	};
+ 
+ 	return 0;

@@ -1,0 +1,98 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: include/rdma/ib_umem_odp.h
+
+Change-Id: I7ae63b89442f01a80c1f3fd7555f4a2b397bc426
+---
+ include/rdma/ib_umem_odp.h | 32 ++++++++++++++++++++++++++++----
+ 1 file changed, 28 insertions(+), 4 deletions(-)
+
+--- a/include/rdma/ib_umem_odp.h
++++ b/include/rdma/ib_umem_odp.h
+@@ -35,13 +35,19 @@
+ 
+ #include <rdma/ib_umem.h>
+ #include <rdma/ib_verbs.h>
++#ifdef CONFIG_INFINIBAND_ON_DEMAND_PAGING
++#ifdef HAVE_INTERVAL_TREE_GENERIC_H
+ #include <linux/interval_tree.h>
++#endif
++#endif
+ #include <rdma/ib_umem_odp_exp.h>
+ 
++#ifdef HAVE_INTERVAL_TREE_GENERIC_H
+ struct umem_odp_node {
+ 	u64 __subtree_last;
+ 	struct rb_node rb;
+ };
++#endif
+ 
+ struct ib_umem_odp {
+ 	struct ib_umem umem;
+@@ -72,9 +78,10 @@ struct ib_umem_odp {
+ 	int notifiers_count;
+ 	int npages;
+ 
+-	/* Tree tracking */
+-	struct umem_odp_node	interval_tree;
+-
++#ifdef HAVE_INTERVAL_TREE_GENERIC_H
++       /* Tree tracking */
++       struct umem_odp_node	interval_tree;
++#endif
+ 	struct completion	notifier_completion;
+ 	int			dying;
+ 	struct work_struct	work;
+@@ -107,7 +114,11 @@ struct ib_ucontext_per_mm {
+ 	struct pid *tgid;
+ 	bool active;
+ 
++#ifndef HAVE_INTERVAL_TREE_TAKES_RB_ROOT
+ 	struct rb_root_cached umem_tree;
++#else
++	struct rb_root          umem_tree;
++#endif
+ 	/* Protects umem_tree */
+ 	struct rw_semaphore umem_rwsem;
+ 
+@@ -118,10 +129,12 @@ struct ib_ucontext_per_mm {
+ 	struct rcu_head rcu;
+ };
+ 
++#ifdef HAVE_INTERVAL_TREE_GENERIC_H
+ int ib_umem_odp_get(struct ib_umem_odp *umem_odp, int access);
+ struct ib_umem_odp *ib_alloc_odp_umem(struct ib_umem_odp *root_umem,
+ 				      unsigned long addr, size_t size);
+ void ib_umem_odp_release(struct ib_umem_odp *umem_odp);
++#endif /* HAVE_INTERVAL_TREE_GENERIC_H */
+ 
+ int ib_umem_odp_map_dma_pages(struct ib_umem_odp *umem_odp, u64 start_offset,
+ 			      u64 bcnt, u64 access_mask,
+@@ -138,16 +151,27 @@ typedef int (*umem_call_back)(struct ib_
+  * Call the callback on each ib_umem in the range. Returns the logical or of
+  * the return values of the functions called.
+  */
++#ifndef HAVE_INTERVAL_TREE_TAKES_RB_ROOT
+ int rbt_ib_umem_for_each_in_range(struct rb_root_cached *root,
++#else
++int rbt_ib_umem_for_each_in_range(struct rb_root *root,
++#endif
+ 				  u64 start, u64 end,
+ 				  umem_call_back cb,
+-				  bool blockable, void *cookie);
++#if defined(HAVE_UMEM_NOTIFIER_PARAM_BLOCKABLE) || defined(HAVE_MMU_NOTIFIER_RANGE_STRUCT)
++				  bool blockable,
++#endif
++				  void *cookie);
+ 
+ /*
+  * Find first region intersecting with address range.
+  * Return NULL if not found
+  */
++#ifndef HAVE_INTERVAL_TREE_TAKES_RB_ROOT
+ struct ib_umem_odp *rbt_ib_umem_lookup(struct rb_root_cached *root,
++#else
++struct ib_umem_odp *rbt_ib_umem_lookup(struct rb_root *root,
++#endif
+ 				       u64 addr, u64 length);
+ 
+ static inline int ib_umem_mmu_notifier_retry(struct ib_umem_odp *umem_odp,

@@ -1,0 +1,278 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/core/umem.c
+
+Change-Id: I51485baf119b4bc9bb31be5261ad3455376fba81
+---
+ drivers/infiniband/core/umem.c | 152 +++++++++++++++++++++++++++++++--
+ 1 file changed, 147 insertions(+), 5 deletions(-)
+
+--- a/drivers/infiniband/core/umem.c
++++ b/drivers/infiniband/core/umem.c
+@@ -37,6 +37,10 @@
+ #include <linux/sched/signal.h>
+ #include <linux/sched/mm.h>
+ #include <linux/export.h>
++#include <linux/scatterlist.h>
++#if !defined(HAVE_FOLL_LONGTERM) && !defined(HAVE_GET_USER_PAGES_LONGTERM)
++#include <linux/hugetlb.h>
++#endif
+ #include <linux/slab.h>
+ #include <linux/pagemap.h>
+ #include <rdma/ib_umem_odp.h>
+@@ -324,15 +328,29 @@ struct ib_umem *ib_umem_get(struct ib_ud
+ 	struct ib_ucontext *context;
+ 	struct ib_umem *umem;
+ 	struct page **page_list;
++#if !defined(HAVE_FOLL_LONGTERM) && !defined(HAVE_GET_USER_PAGES_LONGTERM)
++	struct vm_area_struct **vma_list;
++	int i;
++#endif
+ 	unsigned long lock_limit;
++#if defined(HAVE_PINNED_VM) || defined(HAVE_ATOMIC_PINNED_VM)
+ 	unsigned long new_pinned;
++#endif
+ 	unsigned long cur_base;
+ 	struct mm_struct *mm;
+ 	unsigned long npages;
+ 	int ret;
++#ifdef DMA_ATTR_WRITE_BARRIER
++#ifdef HAVE_STRUCT_DMA_ATTRS
++	DEFINE_DMA_ATTRS(attrs);
++#else
+ 	unsigned long dma_attrs = 0;
++#endif //HAVE_STRUCT_DMA_ATTRS
++#endif //DMA_ATTR_WRITE_BARRIER
+ 	struct scatterlist *sg;
++#ifdef HAVE_GET_USER_PAGES_GUP_FLAGS
+ 	unsigned int gup_flags = FOLL_WRITE;
++#endif
+ 
+ 	if (!udata)
+ 		return ERR_PTR(-EIO);
+@@ -342,8 +360,14 @@ struct ib_umem *ib_umem_get(struct ib_ud
+ 	if (!context)
+ 		return ERR_PTR(-EIO);
+ 
++#ifdef DMA_ATTR_WRITE_BARRIER
+ 	if (dmasync)
++#ifdef HAVE_STRUCT_DMA_ATTRS
++		dma_set_attr(DMA_ATTR_WRITE_BARRIER, &attrs);
++#else
+ 		dma_attrs |= DMA_ATTR_WRITE_BARRIER;
++#endif //HAVE_STRUCT_DMA_ATTRS
++#endif //DMA_ATTR_WRITE_BARRIER
+ 
+ 	/*
+ 	 * If the combination of the addr and size requested for this memory
+@@ -403,13 +427,25 @@ struct ib_umem *ib_umem_get(struct ib_ud
+ 			goto umem_kfree;
+ 		return umem;
+ 	}
+-
++#if !defined(HAVE_FOLL_LONGTERM) && !defined(HAVE_GET_USER_PAGES_LONGTERM)
++	/* We assume the memory is from hugetlb until proved otherwise */
++	umem->hugetlb   = 1;
++#endif
+ 	page_list = (struct page **) __get_free_page(GFP_KERNEL);
+ 	if (!page_list) {
+ 		ret = -ENOMEM;
+ 		goto umem_kfree;
+ 	}
+ 
++#if !defined(HAVE_FOLL_LONGTERM) && !defined(HAVE_GET_USER_PAGES_LONGTERM)
++	/*
++	 *       * if we can't alloc the vma_list, it's not so bad;
++	 *                 * just assume the memory is not hugetlb memory
++	 *                 */
++	vma_list = (struct vm_area_struct **) __get_free_page(GFP_KERNEL);
++	if (!vma_list)
++		umem->hugetlb = 0;
++#endif
+ 	npages = ib_umem_num_pages(umem);
+ 	if (npages == 0 || npages > UINT_MAX) {
+ 		pr_debug("%s: npages(%lu) isn't in the range 1..%u\n", __func__,
+@@ -420,15 +456,41 @@ struct ib_umem *ib_umem_get(struct ib_ud
+ 
+ 	lock_limit = rlimit(RLIMIT_MEMLOCK) >> PAGE_SHIFT;
+ 
++#ifdef HAVE_ATOMIC_PINNED_VM
+ 	new_pinned = atomic64_add_return(npages, &mm->pinned_vm);
+ 	if (new_pinned > lock_limit && !capable(CAP_IPC_LOCK)) {
++#else
++	down_write(&mm->mmap_sem);
++#ifdef HAVE_PINNED_VM
++	if (check_add_overflow(mm->pinned_vm, npages, &new_pinned) ||
++	    (new_pinned > lock_limit && !capable(CAP_IPC_LOCK))) {
++#else
++	current->mm->locked_vm += npages;
++	if ((current->mm->locked_vm > lock_limit) && !capable(CAP_IPC_LOCK)) {
++#endif /* HAVE_PINNED_VM */
++#endif /* HAVE_ATOMIC_PINNED_VM */
++
++#ifdef HAVE_ATOMIC_PINNED_VM
+ 		atomic64_sub(npages, &mm->pinned_vm);
++#else
++		up_write(&mm->mmap_sem);
++#ifdef HAVE_PINNED_VM
+ 		pr_debug("%s: requested to lock(%lu) while limit is(%lu)\n",
+ 		       __func__, new_pinned, lock_limit);
++#else
++		current->mm->locked_vm -= npages;
++#endif /* HAVE_PINNED_VM */
++#endif /* HAVE_ATOMIC_PINNED_VM */
+ 		ret = -ENOMEM;
+ 		goto out;
+ 	}
+ 
++#ifndef HAVE_ATOMIC_PINNED_VM
++#ifdef HAVE_PINNED_VM
++	mm->pinned_vm = new_pinned;
++#endif /* HAVE_PINNED_VM */
++	up_write(&mm->mmap_sem);
++#endif /* HAVE_ATOMIC_PINNED_VM */
+ 	cur_base = addr & PAGE_MASK;
+ 
+ 	ret = sg_alloc_table(&umem->sg_head, npages, GFP_KERNEL);
+@@ -438,23 +500,58 @@ struct ib_umem *ib_umem_get(struct ib_ud
+ 		goto vma;
+ 	}
+ 
++#ifdef HAVE_GET_USER_PAGES_GUP_FLAGS
+ 	if (!umem->writable)
+ 		gup_flags |= FOLL_FORCE;
++#endif
+ 
+ 	sg = umem->sg_head.sgl;
+ 
+ 	while (npages) {
+ 		down_read(&mm->mmap_sem);
++#ifdef HAVE_FOLL_LONGTERM
+ 		ret = get_user_pages(cur_base,
+ 				     min_t(unsigned long, npages,
+ 					   PAGE_SIZE / sizeof (struct page *)),
+ 				     gup_flags | FOLL_LONGTERM,
+ 				     page_list, NULL);
++#elif defined(HAVE_GET_USER_PAGES_LONGTERM)
++		ret = get_user_pages_longterm(cur_base,
++			min_t(unsigned long, npages,
++			PAGE_SIZE / sizeof (struct page *)),
++			gup_flags, page_list, NULL);
++#elif defined(HAVE_GET_USER_PAGES_8_PARAMS)
++		ret = get_user_pages(current, current->mm, cur_base,
++				     min_t(unsigned long, npages,
++					   PAGE_SIZE / sizeof (struct page *)),
++				     1, !umem->writable, page_list, vma_list);
++#else
++#ifdef HAVE_GET_USER_PAGES_7_PARAMS
++		ret = get_user_pages(current, current->mm, cur_base,
++#else
++		ret = get_user_pages(cur_base,
++#endif
++				     min_t(unsigned long, npages,
++					   PAGE_SIZE / sizeof (struct page *)),
++#ifdef HAVE_GET_USER_PAGES_GUP_FLAGS
++				     gup_flags, page_list, vma_list);
++#else
++				     1, !umem->writable, page_list, vma_list);
++#endif
++#endif
++
+ 		if (ret < 0) {
++#ifdef HAVE_GET_USER_PAGES_GUP_FLAGS
+ 			pr_debug("%s: failed to get user pages, nr_pages=%lu, flags=%u\n", __func__,
+ 			       min_t(unsigned long, npages,
+ 				     PAGE_SIZE / sizeof(struct page *)),
+ 			       gup_flags);
++#else
++			pr_debug("%s: failed to get user pages, nr_pages=%lu\n", __func__,
++			       min_t(unsigned long, npages,
++				     PAGE_SIZE / sizeof(struct page *)));
++#endif
++
+ 			up_read(&mm->mmap_sem);
+ 			goto umem_release;
+ 		}
+@@ -465,17 +562,37 @@ struct ib_umem *ib_umem_get(struct ib_ud
+ 		sg = ib_umem_add_sg_table(sg, page_list, ret,
+ 			dma_get_max_seg_size(context->device->dma_device),
+ 			&umem->sg_nents);
+-
++#if !defined(HAVE_FOLL_LONGTERM) && !defined(HAVE_GET_USER_PAGES_LONGTERM)
++		/* Continue to hold the mmap_sem as vma_list access
++		 *               * needs to be protected.
++		 *                                */
++		for (i = 0; i < ret && umem->hugetlb; i++) {
++			if (vma_list && !is_vm_hugetlb_page(vma_list[i]))
++				umem->hugetlb = 0;
++		}
++#endif
+ 		up_read(&mm->mmap_sem);
+ 	}
+ 
+ 	sg_mark_end(sg);
+ 
+-	umem->nmap = ib_dma_map_sg_attrs(context->device,
++#ifndef DMA_ATTR_WRITE_BARRIER
++	umem->nmap = ib_dma_map_sg(
++#else
++	umem->nmap = ib_dma_map_sg_attrs(
++#endif
++				  context->device,
+ 				  umem->sg_head.sgl,
+ 				  umem->sg_nents,
+-				  DMA_BIDIRECTIONAL,
+-				  dma_attrs);
++				  DMA_BIDIRECTIONAL
++#ifdef DMA_ATTR_WRITE_BARRIER
++#ifdef HAVE_STRUCT_DMA_ATTRS
++				  , &attrs
++#else
++	       			  , dma_attrs
++#endif //HAVE_STRUCT_DMA_ATTRS
++#endif //DMA_ATTR_WRITE_BARRIER
++				  );
+ 
+ 	if (!umem->nmap) {
+ 		pr_err("%s: failed to map scatterlist, npages=%lu\n", __func__,
+@@ -490,8 +607,22 @@ struct ib_umem *ib_umem_get(struct ib_ud
+ umem_release:
+ 	__ib_umem_release(context->device, umem, 0);
+ vma:
++#ifdef HAVE_ATOMIC_PINNED_VM
+ 	atomic64_sub(ib_umem_num_pages(umem), &mm->pinned_vm);
++#else
++	down_write(&mm->mmap_sem);
++#ifdef HAVE_PINNED_VM
++	mm->pinned_vm -= ib_umem_num_pages(umem);
++#else
++	mm->locked_vm -= ib_umem_num_pages(umem);
++#endif /* HAVE_PINNED_VM */
++	up_write(&mm->mmap_sem);
++#endif /* HAVE_ATOMIC_PINNED_VM */
+ out:
++#if !defined(HAVE_FOLL_LONGTERM) && !defined(HAVE_GET_USER_PAGES_LONGTERM)
++	if (vma_list)
++		free_page((unsigned long) vma_list);
++#endif
+ 	free_page((unsigned long) page_list);
+ 	/*
+  	 * If the address belongs to peer memory client, then the first
+@@ -547,7 +678,18 @@ void ib_umem_release(struct ib_umem *ume
+ 
+ 	__ib_umem_release(umem->context->device, umem, 1);
+ 
++#ifdef HAVE_ATOMIC_PINNED_VM
+ 	atomic64_sub(ib_umem_num_pages(umem), &umem->owning_mm->pinned_vm);
++#else
++	down_write(&umem->owning_mm->mmap_sem);
++#ifdef HAVE_PINNED_VM
++	umem->owning_mm->pinned_vm -= ib_umem_num_pages(umem);
++#else
++	umem->owning_mm->locked_vm -= ib_umem_num_pages(umem);
++#endif /* HAVE_PINNED_VM */
++	up_write(&umem->owning_mm->mmap_sem);
++#endif /*HAVE_ATOMIC_PINNED_VM*/
++
+ 	__ib_umem_release_tail(umem);
+ }
+ EXPORT_SYMBOL(ib_umem_release);

@@ -1,0 +1,156 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/core/ucm.c
+
+Change-Id: I0e021aff0f061aa3af924494b80b31b8a7811815
+---
+ drivers/infiniband/core/ucm.c | 39 +++++++++++++++++++++++++++++++--------
+ 1 file changed, 31 insertions(+), 8 deletions(-)
+
+--- a/drivers/infiniband/core/ucm.c
++++ b/drivers/infiniband/core/ucm.c
+@@ -46,7 +46,9 @@
+ #include <linux/mutex.h>
+ #include <linux/slab.h>
+ 
++#ifdef HAVE_ARRAY_INDEX_NOSPEC
+ #include <linux/nospec.h>
++#endif
+ 
+ #include <linux/uaccess.h>
+ 
+@@ -60,6 +62,9 @@
+ MODULE_AUTHOR("Libor Michalek");
+ MODULE_DESCRIPTION("InfiniBand userspace Connection Manager access");
+ MODULE_LICENSE("Dual BSD/GPL");
++#ifdef RETPOLINE_MLNX
++MODULE_INFO(retpoline, "Y");
++#endif
+ 
+ struct ib_ucm_device {
+ 	int			devnum;
+@@ -124,14 +129,12 @@ static struct ib_client ucm_client = {
+ 	.add    = ib_ucm_add_one,
+ 	.remove = ib_ucm_remove_one
+ };
+-
+ static DEFINE_XARRAY_ALLOC(ctx_id_table);
+ static DECLARE_BITMAP(dev_map, IB_UCM_MAX_DEVICES);
+ 
+ static struct ib_ucm_context *ib_ucm_ctx_get(struct ib_ucm_file *file, int id)
+ {
+ 	struct ib_ucm_context *ctx;
+-
+ 	xa_lock(&ctx_id_table);
+ 	ctx = xa_load(&ctx_id_table, id);
+ 	if (!ctx)
+@@ -141,7 +144,6 @@ static struct ib_ucm_context *ib_ucm_ctx
+ 	else
+ 		atomic_inc(&ctx->ref);
+ 	xa_unlock(&ctx_id_table);
+-
+ 	return ctx;
+ }
+ 
+@@ -192,10 +194,8 @@ static struct ib_ucm_context *ib_ucm_ctx
+ 	init_completion(&ctx->comp);
+ 	ctx->file = file;
+ 	INIT_LIST_HEAD(&ctx->events);
+-
+ 	if (xa_alloc(&ctx_id_table, &ctx->id, ctx, xa_limit_32b, GFP_KERNEL))
+ 		goto error;
+-
+ 	list_add_tail(&ctx->file_list, &file->ctxs);
+ 	return ctx;
+ 
+@@ -529,7 +529,6 @@ static ssize_t ib_ucm_destroy_id(struct
+ 
+ 	if (copy_from_user(&cmd, inbuf, sizeof(cmd)))
+ 		return -EFAULT;
+-
+ 	xa_lock(&ctx_id_table);
+ 	ctx = xa_load(&ctx_id_table, cmd.id);
+ 	if (!ctx)
+@@ -1112,8 +1111,9 @@ static ssize_t ib_ucm_write(struct file
+ 
+ 	if (hdr.cmd >= ARRAY_SIZE(ucm_cmd_table))
+ 		return -EINVAL;
++#ifdef HAVE_ARRAY_INDEX_NOSPEC
+ 	hdr.cmd = array_index_nospec(hdr.cmd, ARRAY_SIZE(ucm_cmd_table));
+-
++#endif
+ 	if (hdr.in + sizeof(hdr) > len)
+ 		return -EINVAL;
+ 
+@@ -1165,7 +1165,11 @@ static int ib_ucm_open(struct inode *ino
+ 	file->filp = filp;
+ 	file->device = container_of(inode->i_cdev, struct ib_ucm_device, cdev);
+ 
++#ifdef HAVE_STREAM_OPEN
+ 	return stream_open(inode, filp);
++#else
++	return nonseekable_open(inode, filp);
++#endif
+ }
+ 
+ static int ib_ucm_close(struct inode *inode, struct file *filp)
+@@ -1178,7 +1182,6 @@ static int ib_ucm_close(struct inode *in
+ 		ctx = list_entry(file->ctxs.next,
+ 				 struct ib_ucm_context, file_list);
+ 		mutex_unlock(&file->file_mutex);
+-
+ 		xa_erase(&ctx_id_table, ctx->id);
+ 		ib_destroy_cm_id(ctx->cm_id);
+ 		ib_ucm_cleanup_events(ctx);
+@@ -1289,8 +1292,16 @@ static void ib_ucm_remove_one(struct ib_
+ 	put_device(&ucm_dev->dev);
+ }
+ 
++#ifdef HAVE_CLASS_ATTR_STRING
+ static CLASS_ATTR_STRING(abi_version, S_IRUGO,
+ 			 __stringify(IB_USER_CM_ABI_VERSION));
++#else
++static ssize_t show_abi_version(struct class *class, char *buf)
++{
++	return sprintf(buf, "%d\n", IB_USER_CM_ABI_VERSION);
++}
++static CLASS_ATTR(abi_version, S_IRUGO, show_abi_version, NULL);
++#endif
+ 
+ static int __init ib_ucm_init(void)
+ {
+@@ -1310,7 +1321,11 @@ static int __init ib_ucm_init(void)
+ 		goto err_alloc;
+ 	}
+ 
++#ifdef HAVE_CLASS_ATTR_STRING
+ 	ret = class_create_file(&cm_class, &class_attr_abi_version.attr);
++#else
++	ret = class_create_file(&cm_class, &class_attr_abi_version);
++#endif
+ 	if (ret) {
+ 		pr_err("ucm: couldn't create abi_version attribute\n");
+ 		goto error2;
+@@ -1324,7 +1339,11 @@ static int __init ib_ucm_init(void)
+ 	return 0;
+ 
+ error3:
++#ifdef HAVE_CLASS_ATTR_STRING
+ 	class_remove_file(&cm_class, &class_attr_abi_version.attr);
++#else
++	class_remove_file(&cm_class, &class_attr_abi_version);
++#endif
+ error2:
+ 	unregister_chrdev_region(dynamic_ucm_dev, IB_UCM_NUM_DYNAMIC_MINOR);
+ err_alloc:
+@@ -1336,7 +1355,11 @@ error1:
+ static void __exit ib_ucm_cleanup(void)
+ {
+ 	ib_unregister_client(&ucm_client);
++#ifdef HAVE_CLASS_ATTR_STRING
+ 	class_remove_file(&cm_class, &class_attr_abi_version.attr);
++#else
++	class_remove_file(&cm_class, &class_attr_abi_version);
++#endif
+ 	unregister_chrdev_region(IB_UCM_BASE_DEV, IB_UCM_NUM_FIXED_MINOR);
+ 	unregister_chrdev_region(dynamic_ucm_dev, IB_UCM_NUM_DYNAMIC_MINOR);
+ 	WARN_ON(!xa_empty(&ctx_id_table));

@@ -1,0 +1,20 @@
+From: Alaa Hleihel <alaa@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/hw/mlx4/mlx4_ib.h
+
+Change-Id: I1ac9688636f518c8ab7ab750918f4267589a8a6d
+---
+ drivers/infiniband/hw/mlx4/mlx4_ib.h | 3 +++
+ 1 file changed, 3 insertions(+)
+
+--- a/drivers/infiniband/hw/mlx4/mlx4_ib.h
++++ b/drivers/infiniband/hw/mlx4/mlx4_ib.h
+@@ -211,6 +211,9 @@ struct mlx4_ib_user_uar {
+ 	struct list_head	list;
+ };
+ enum mlx4_ib_qp_flags {
++#ifndef HAVE_MEMALLOC_NOIO_SAVE
++	MLX4_IB_QP_CREATE_USE_GFP_NOIO = IB_QP_CREATE_USE_GFP_NOIO,
++#endif
+ 	MLX4_IB_QP_LSO = IB_QP_CREATE_IPOIB_UD_LSO,
+ 	MLX4_IB_QP_BLOCK_MULTICAST_LOOPBACK = IB_QP_CREATE_BLOCK_MULTICAST_LOOPBACK,
+ 	MLX4_IB_QP_CROSS_CHANNEL = IB_QP_CREATE_CROSS_CHANNEL,

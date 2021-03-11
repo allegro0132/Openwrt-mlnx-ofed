@@ -1,0 +1,5 @@
+%defattr(644,root,root,755)
+/lib/modules/%2-%1
+%if %{IS_RHEL_VENDOR}
+%config(noreplace) /etc/depmod.d/mlnx-en-*.conf
+%endif

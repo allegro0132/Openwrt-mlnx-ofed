@@ -1,0 +1,52 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: include/trace/events/ib_mad.h
+
+Change-Id: I4f8c4cd7a94b7a758d53501d2231a44228e9b3bb
+---
+ include/trace/events/ib_mad.h | 15 ++++++++++++++-
+ 1 file changed, 14 insertions(+), 1 deletion(-)
+
+--- a/include/trace/events/ib_mad.h
++++ b/include/trace/events/ib_mad.h
+@@ -4,20 +4,31 @@
+  * Copyright (c) 2018 Intel Corporation.  All rights reserved.
+  */
+ 
++#ifndef MLX_DISABLE_TRACEPOINTS
+ #undef TRACE_SYSTEM
+ #define TRACE_SYSTEM ib_mad
+ 
+ #if !defined(_TRACE_IB_MAD_H) || defined(TRACE_HEADER_MULTI_READ)
+ #define _TRACE_IB_MAD_H
+-
+ #include <linux/tracepoint.h>
+ #include <rdma/ib_mad.h>
+ 
+ #ifdef CONFIG_TRACEPOINTS
++
++#ifdef HAVE_TRACE_EVENTS_H
+ struct trace_event_raw_ib_mad_send_template;
++#else
++struct ftrace_raw_ib_mad_send_template;
++#endif /* HAVE_TRACE_EVENTS_H */
++
+ static void create_mad_addr_info(struct ib_mad_send_wr_private *mad_send_wr,
+ 			  struct ib_mad_qp_info *qp_info,
++#ifdef HAVE_TRACE_EVENTS_H
+ 			  struct trace_event_raw_ib_mad_send_template *entry);
++#else
++			  struct ftrace_raw_ib_mad_send_template *entry);
++#endif
++
+ #endif
+ 
+ DECLARE_EVENT_CLASS(ib_mad_send_template,
+@@ -385,6 +396,8 @@ DEFINE_EVENT(ib_mad_opa_ib_template, ib_
+ 	TP_PROTO(struct ib_smp *smp),
+ 	TP_ARGS(smp));
+ 
++
+ #endif /* _TRACE_IB_MAD_H */
+ 
+ #include <trace/define_trace.h>
++#endif

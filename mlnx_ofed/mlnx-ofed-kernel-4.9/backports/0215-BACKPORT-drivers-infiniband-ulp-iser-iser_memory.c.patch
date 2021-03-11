@@ -1,0 +1,471 @@
+From: Sergey Gorenko <sergeygo@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/ulp/iser/iser_memory.c
+
+Change-Id: Iaa63445373c9fc6a2ed7659241bbdea21e535ef2
+---
+ drivers/infiniband/ulp/iser/iser_memory.c | 363 +++++++++++++++++++++++++++++-
+ 1 file changed, 362 insertions(+), 1 deletion(-)
+
+--- a/drivers/infiniband/ulp/iser/iser_memory.c
++++ b/drivers/infiniband/ulp/iser/iser_memory.c
+@@ -36,6 +36,7 @@
+ #include <linux/mm.h>
+ #include <linux/highmem.h>
+ #include <linux/scatterlist.h>
++#include <linux/sizes.h>
+ 
+ #include "iscsi_iser.h"
+ static
+@@ -67,6 +68,247 @@ static const struct iser_reg_ops fmr_ops
+ 	.reg_desc_put	= iser_reg_desc_put_fmr,
+ };
+ 
++#ifndef HAVE_BLK_QUEUE_VIRT_BOUNDARY
++#define IS_4K_ALIGNED(addr) ((((unsigned long)addr) & ~MASK_4K) == 0)
++static void iser_free_bounce_sg(struct iser_data_buf *data)
++{
++	struct scatterlist *sg;
++	int count;
++
++	for_each_sg (data->sg, sg, data->size, count)
++		__free_page(sg_page(sg));
++
++	kfree(data->sg);
++
++	data->sg = data->orig_sg;
++	data->size = data->orig_size;
++	data->orig_sg = NULL;
++	data->orig_size = 0;
++}
++
++static int iser_alloc_bounce_sg(struct iser_data_buf *data)
++{
++	struct scatterlist *sg;
++	struct page *page;
++	unsigned long length = data->data_len;
++	int i = 0, nents = DIV_ROUND_UP(length, PAGE_SIZE);
++
++	sg = kcalloc(nents, sizeof(*sg), GFP_ATOMIC);
++	if (!sg)
++		goto err;
++
++	sg_init_table(sg, nents);
++	while (length) {
++		u32 page_len = min_t(u32, length, PAGE_SIZE);
++
++		page = alloc_page(GFP_ATOMIC);
++		if (!page)
++			goto err;
++
++		sg_set_page(&sg[i], page, page_len, 0);
++		length -= page_len;
++		i++;
++	}
++
++	data->orig_sg = data->sg;
++	data->orig_size = data->size;
++	data->sg = sg;
++	data->size = nents;
++
++	return 0;
++
++err:
++	for (; i > 0; i--)
++		__free_page(sg_page(&sg[i - 1]));
++	kfree(sg);
++
++	return -ENOMEM;
++}
++
++static void iser_copy_bounce(struct iser_data_buf *data, bool to_buffer)
++{
++	struct scatterlist *osg, *bsg = data->sg;
++	void *oaddr, *baddr;
++	unsigned int left = data->data_len;
++	unsigned int bsg_off = 0;
++	int i;
++
++	for_each_sg (data->orig_sg, osg, data->orig_size, i) {
++		unsigned int copy_len, osg_off = 0;
++
++#ifdef HAVE_KM_TYPE
++		if (to_buffer)
++			oaddr = kmap_atomic(sg_page(osg), KM_USER0) +
++				osg->offset;
++		else
++			oaddr = kmap_atomic(sg_page(osg), KM_SOFTIRQ0) +
++				osg->offset;
++#else
++		oaddr = kmap_atomic(sg_page(osg)) + osg->offset;
++#endif
++		copy_len = min(left, osg->length);
++		while (copy_len) {
++			unsigned int len = min(copy_len, bsg->length - bsg_off);
++
++#ifdef HAVE_KM_TYPE
++			if (to_buffer)
++				baddr = kmap_atomic(sg_page(bsg), KM_USER0) +
++					bsg->offset;
++			else
++				baddr = kmap_atomic(sg_page(bsg), KM_SOFTIRQ0) +
++					bsg->offset;
++#else
++			baddr = kmap_atomic(sg_page(bsg)) + bsg->offset;
++#endif
++			if (to_buffer)
++				memcpy(baddr + bsg_off, oaddr + osg_off, len);
++			else
++				memcpy(oaddr + osg_off, baddr + bsg_off, len);
++
++#ifdef HAVE_KM_TYPE
++			if (to_buffer)
++				kunmap_atomic(baddr - bsg->offset, KM_USER0);
++			else
++				kunmap_atomic(baddr - bsg->offset, KM_SOFTIRQ0);
++#else
++			kunmap_atomic(baddr - bsg->offset);
++#endif
++			osg_off += len;
++			bsg_off += len;
++			copy_len -= len;
++
++			if (bsg_off >= bsg->length) {
++				bsg = sg_next(bsg);
++				bsg_off = 0;
++			}
++		}
++#ifdef HAVE_KM_TYPE
++		if (to_buffer)
++			kunmap_atomic(oaddr - osg->offset, KM_USER0);
++		else
++			kunmap_atomic(oaddr - osg->offset, KM_SOFTIRQ0);
++#else
++		kunmap_atomic(oaddr - osg->offset);
++#endif
++		left -= osg_off;
++	}
++}
++
++static inline void iser_copy_from_bounce(struct iser_data_buf *data)
++{
++	iser_copy_bounce(data, false);
++}
++
++static inline void iser_copy_to_bounce(struct iser_data_buf *data)
++{
++	iser_copy_bounce(data, true);
++}
++
++/**
++ * iser_start_rdma_unaligned_sg
++ */
++static int iser_start_rdma_unaligned_sg(struct iscsi_iser_task *iser_task,
++					struct iser_data_buf *data,
++					enum iser_data_dir cmd_dir)
++{
++	struct ib_device *dev = iser_task->iser_conn->ib_conn.device->ib_device;
++	int rc;
++
++	rc = iser_alloc_bounce_sg(data);
++	if (rc) {
++		iser_err("Failed to allocate bounce for data len %lu\n",
++			 data->data_len);
++		return rc;
++	}
++
++	if (cmd_dir == ISER_DIR_OUT)
++		iser_copy_to_bounce(data);
++
++	data->dma_nents = ib_dma_map_sg(
++		dev, data->sg, data->size,
++		(cmd_dir == ISER_DIR_OUT) ? DMA_TO_DEVICE : DMA_FROM_DEVICE);
++	if (!data->dma_nents) {
++		iser_err("Got dma_nents %d, something went wrong...\n",
++			 data->dma_nents);
++		rc = -ENOMEM;
++		goto err;
++	}
++
++	return 0;
++err:
++	iser_free_bounce_sg(data);
++	return rc;
++}
++
++/**
++ * iser_finalize_rdma_unaligned_sg
++ */
++void iser_finalize_rdma_unaligned_sg(struct iscsi_iser_task *iser_task,
++				     struct iser_data_buf *data,
++				     enum iser_data_dir cmd_dir)
++{
++	struct ib_device *dev = iser_task->iser_conn->ib_conn.device->ib_device;
++
++	ib_dma_unmap_sg(dev, data->sg, data->size,
++			(cmd_dir == ISER_DIR_OUT) ? DMA_TO_DEVICE :
++						    DMA_FROM_DEVICE);
++
++	if (cmd_dir == ISER_DIR_IN)
++		iser_copy_from_bounce(data);
++
++	iser_free_bounce_sg(data);
++}
++
++/**
++ * iser_data_buf_aligned_len - Tries to determine the maximal correctly aligned
++ * for RDMA sub-list of a scatter-gather list of memory buffers, and  returns
++ * the number of entries which are aligned correctly. Supports the case where
++ * consecutive SG elements are actually fragments of the same physical page.
++ */
++static int iser_data_buf_aligned_len(struct iser_data_buf *data,
++				     struct ib_device *ibdev,
++				     unsigned sg_tablesize)
++{
++	struct scatterlist *sg, *sgl, *next_sg = NULL;
++	u64 start_addr, end_addr;
++	int i, ret_len, start_check = 0;
++
++	if (data->dma_nents == 1)
++		return 1;
++
++	sgl = data->sg;
++	start_addr = sg_dma_address(sgl);
++
++	for_each_sg (sgl, sg, data->dma_nents, i) {
++		if (start_check && !IS_4K_ALIGNED(start_addr))
++			break;
++
++		next_sg = sg_next(sg);
++		if (!next_sg)
++			break;
++
++		end_addr = start_addr + sg_dma_len(sg);
++		start_addr = sg_dma_address(next_sg);
++
++		if (end_addr == start_addr) {
++			start_check = 0;
++			continue;
++		} else
++			start_check = 1;
++
++		if (!IS_4K_ALIGNED(end_addr))
++			break;
++	}
++	ret_len = (next_sg) ? i : i + 1;
++
++	if (unlikely(ret_len != data->dma_nents))
++		iser_warn("rdma alignment violation (%d/%d aligned)\n", ret_len,
++			  data->dma_nents);
++
++	return ret_len;
++}
++#endif
++
+ void iser_reg_comp(struct ib_cq *cq, struct ib_wc *wc)
+ {
+ 	iser_err_comp(wc, "memreg");
+@@ -159,6 +401,52 @@ static void iser_dump_page_vec(struct is
+ 		iser_err("vec[%d]: %llx\n", i, page_vec->pages[i]);
+ }
+ 
++#ifndef HAVE_BLK_QUEUE_VIRT_BOUNDARY
++static int fall_to_bounce_buf(struct iscsi_iser_task *iser_task,
++			      struct iser_data_buf *mem,
++			      enum iser_data_dir cmd_dir)
++{
++	struct iscsi_conn *iscsi_conn = iser_task->iser_conn->iscsi_conn;
++	struct iser_device *device = iser_task->iser_conn->ib_conn.device;
++
++	iscsi_conn->fmr_unalign_cnt++;
++
++	if (iser_debug_level > 0)
++		iser_data_buf_dump(mem, device->ib_device);
++
++	/* unmap the command data before accessing it */
++	iser_dma_unmap_task_data(iser_task, mem,
++				 (cmd_dir == ISER_DIR_OUT) ? DMA_TO_DEVICE :
++							     DMA_FROM_DEVICE);
++
++	/* allocate copy buf, if we are writing, copy the */
++	/* unaligned scatterlist, dma map the copy        */
++	if (iser_start_rdma_unaligned_sg(iser_task, mem, cmd_dir) != 0)
++		return -ENOMEM;
++
++	return 0;
++}
++
++static int iser_handle_unaligned_buf(struct iscsi_iser_task *task,
++				     struct iser_data_buf *mem,
++				     enum iser_data_dir dir)
++{
++	struct iser_conn *iser_conn = task->iser_conn;
++	struct iser_device *device = iser_conn->ib_conn.device;
++	int err, aligned_len;
++
++	aligned_len = iser_data_buf_aligned_len(mem, device->ib_device,
++						iser_conn->scsi_sg_tablesize);
++	if (aligned_len != mem->dma_nents) {
++		err = fall_to_bounce_buf(task, mem, dir);
++		if (err)
++			return err;
++	}
++
++	return 0;
++}
++#endif
++
+ int iser_dma_map_task_data(struct iscsi_iser_task *iser_task,
+ 			    struct iser_data_buf *data,
+ 			    enum iser_data_dir iser_dir,
+@@ -321,8 +609,17 @@ iser_set_dif_domain(struct scsi_cmnd *sc
+ 		    struct ib_sig_domain *domain)
+ {
+ 	domain->sig_type = IB_SIG_TYPE_T10_DIF;
++#ifdef HAVE_SCSI_CMND_PROT_FLAGS
+ 	domain->sig.dif.pi_interval = scsi_prot_interval(sc);
++#ifdef HAVE_T10_PI_REF_TAG
+ 	domain->sig.dif.ref_tag = t10_pi_ref_tag(sc->request);
++#else
++	domain->sig.dif.ref_tag = scsi_prot_ref_tag(sc);
++#endif
++#else
++	domain->sig.dif.pi_interval = sc->device->sector_size;
++	domain->sig.dif.ref_tag = scsi_get_lba(sc) & 0xffffffff;
++#endif
+ 	/*
+ 	 * At the moment we hard code those, but in the future
+ 	 * we will take them from sc.
+@@ -330,8 +627,14 @@ iser_set_dif_domain(struct scsi_cmnd *sc
+ 	domain->sig.dif.apptag_check_mask = 0xffff;
+ 	domain->sig.dif.app_escape = true;
+ 	domain->sig.dif.ref_escape = true;
++#ifdef HAVE_SCSI_CMND_PROT_FLAGS
+ 	if (sc->prot_flags & SCSI_PROT_REF_INCREMENT)
+ 		domain->sig.dif.ref_remap = true;
++#else
++	if (scsi_get_prot_type(sc) == SCSI_PROT_DIF_TYPE1 ||
++	    scsi_get_prot_type(sc) == SCSI_PROT_DIF_TYPE2)
++		domain->sig.dif.ref_remap = true;
++#endif
+ };
+ 
+ static int
+@@ -348,16 +651,30 @@ iser_set_sig_attrs(struct scsi_cmnd *sc,
+ 	case SCSI_PROT_WRITE_STRIP:
+ 		sig_attrs->wire.sig_type = IB_SIG_TYPE_NONE;
+ 		iser_set_dif_domain(sc, sig_attrs, &sig_attrs->mem);
++#ifdef HAVE_SCSI_CMND_PROT_FLAGS
++		/* WA for #963642: DIX always use SCSI_PROT_IP_CHECKSUM */
++		sc->prot_flags |= SCSI_PROT_IP_CHECKSUM;
+ 		sig_attrs->mem.sig.dif.bg_type = sc->prot_flags & SCSI_PROT_IP_CHECKSUM ?
+ 						IB_T10DIF_CSUM : IB_T10DIF_CRC;
++#else
++		sig_attrs->mem.sig.dif.bg_type =
++			iser_pi_guard ? IB_T10DIF_CSUM : IB_T10DIF_CRC;
++#endif
+ 		break;
+ 	case SCSI_PROT_READ_PASS:
+ 	case SCSI_PROT_WRITE_PASS:
+ 		iser_set_dif_domain(sc, sig_attrs, &sig_attrs->wire);
+ 		sig_attrs->wire.sig.dif.bg_type = IB_T10DIF_CRC;
+ 		iser_set_dif_domain(sc, sig_attrs, &sig_attrs->mem);
++#ifdef HAVE_SCSI_CMND_PROT_FLAGS
++		/* WA for #963642: DIX always use SCSI_PROT_IP_CHECKSUM */
++		sc->prot_flags |= SCSI_PROT_IP_CHECKSUM;
+ 		sig_attrs->mem.sig.dif.bg_type = sc->prot_flags & SCSI_PROT_IP_CHECKSUM ?
+ 						IB_T10DIF_CSUM : IB_T10DIF_CRC;
++#else
++		sig_attrs->mem.sig.dif.bg_type =
++			iser_pi_guard ? IB_T10DIF_CSUM : IB_T10DIF_CRC;
++#endif
+ 		break;
+ 	default:
+ 		iser_err("Unsupported PI operation %d\n",
+@@ -368,6 +685,7 @@ iser_set_sig_attrs(struct scsi_cmnd *sc,
+ 	return 0;
+ }
+ 
++#ifdef HAVE_SCSI_CMND_PROT_FLAGS
+ static inline void
+ iser_set_prot_checks(struct scsi_cmnd *sc, u8 *mask)
+ {
+@@ -377,6 +695,30 @@ iser_set_prot_checks(struct scsi_cmnd *s
+ 	if (sc->prot_flags & SCSI_PROT_GUARD_CHECK)
+ 		*mask |= IB_SIG_CHECK_GUARD;
+ }
++#else
++static int
++iser_set_prot_checks(struct scsi_cmnd *sc, u8 *mask)
++{
++	switch (scsi_get_prot_type(sc)) {
++	case SCSI_PROT_DIF_TYPE0:
++		*mask = 0x0;
++		break;
++	case SCSI_PROT_DIF_TYPE1:
++	case SCSI_PROT_DIF_TYPE2:
++		*mask = IB_SIG_CHECK_GUARD | IB_SIG_CHECK_REFTAG;
++		break;
++	case SCSI_PROT_DIF_TYPE3:
++		*mask = IB_SIG_CHECK_GUARD;
++		break;
++	default:
++		iser_err("Unsupported protection type %d\n",
++			 scsi_get_prot_type(sc));
++		return -EINVAL;
++	}
++
++	return 0;
++}
++#endif
+ 
+ static inline void
+ iser_inv_rkey(struct ib_send_wr *inv_wr,
+@@ -410,8 +752,13 @@ iser_reg_sig_mr(struct iscsi_iser_task *
+ 	ret = iser_set_sig_attrs(iser_task->sc, sig_attrs);
+ 	if (ret)
+ 		goto err;
+-
++#ifdef HAVE_SCSI_CMND_PROT_FLAGS
+ 	iser_set_prot_checks(iser_task->sc, &sig_attrs->check_mask);
++#else
++	ret = iser_set_prot_checks(iser_task->sc, &sig_attrs->check_mask);
++	if (ret)
++		goto err;
++#endif
+ 
+ 	if (rsc->mr_valid)
+ 		iser_inv_rkey(&tx_desc->inv_wr, mr, cqe, &wr->wr);
+@@ -519,12 +866,22 @@ int iser_reg_rdma_mem(struct iscsi_iser_
+ {
+ 	struct ib_conn *ib_conn = &task->iser_conn->ib_conn;
+ 	struct iser_device *device = ib_conn->device;
++#ifndef HAVE_BLK_QUEUE_VIRT_BOUNDARY
++	struct ib_device *ib_dev = device->ib_device;
++#endif
+ 	struct iser_data_buf *mem = &task->data[dir];
+ 	struct iser_mem_reg *reg = &task->rdma_reg[dir];
+ 	struct iser_fr_desc *desc = NULL;
+ 	bool use_dma_key;
+ 	int err;
+ 
++#ifndef HAVE_BLK_QUEUE_VIRT_BOUNDARY
++	if (!(ib_dev->attrs.device_cap_flags & IB_DEVICE_SG_GAPS_REG)) {
++		err = iser_handle_unaligned_buf(task, mem, dir);
++		if (unlikely(err))
++			return err;
++	}
++#endif
+ 	use_dma_key = mem->dma_nents == 1 && (all_imm || !iser_always_reg) &&
+ 		      scsi_get_prot_op(task->sc) == SCSI_PROT_NORMAL;
+ 
+@@ -551,6 +908,10 @@ int iser_reg_rdma_mem(struct iscsi_iser_
+ err_reg:
+ 	if (desc)
+ 		device->reg_ops->reg_desc_put(ib_conn, desc);
++#ifndef HAVE_BLK_QUEUE_VIRT_BOUNDARY
++	if (mem->orig_sg)
++		iser_free_bounce_sg(mem);
++#endif
+ 
+ 	return err;
+ }

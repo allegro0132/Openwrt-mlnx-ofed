@@ -1,0 +1,142 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/core/fmr_pool.c
+
+Change-Id: I6e20f521d76e290f9e7e6c4fa55f932effc87268
+---
+ drivers/infiniband/core/fmr_pool.c | 58 +++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 57 insertions(+), 1 deletion(-)
+
+--- a/drivers/infiniband/core/fmr_pool.c
++++ b/drivers/infiniband/core/fmr_pool.c
+@@ -96,8 +96,12 @@ struct ib_fmr_pool {
+ 						   void *              arg);
+ 	void                     *flush_arg;
+ 
++#ifdef HAVE_KTHREAD_QUEUE_WORK
+ 	struct kthread_worker	  *worker;
+ 	struct kthread_work	  work;
++#else
++	struct task_struct       *thread;
++#endif
+ 
+ 	atomic_t                  req_ser;
+ 	atomic_t                  flush_ser;
+@@ -119,13 +123,14 @@ static inline struct ib_pool_fmr *ib_fmr
+ {
+ 	struct hlist_head *bucket;
+ 	struct ib_pool_fmr *fmr;
++	COMPAT_HL_NODE
+ 
+ 	if (!pool->cache_bucket)
+ 		return NULL;
+ 
+ 	bucket = pool->cache_bucket + ib_fmr_hash(*page_list);
+ 
+-	hlist_for_each_entry(fmr, bucket, cache_node)
++	compat_hlist_for_each_entry(fmr, bucket, cache_node)
+ 		if (io_virtual_address == fmr->io_virtual_address &&
+ 		    page_list_len      == fmr->page_list_len      &&
+ 		    !memcmp(page_list, fmr->page_list,
+@@ -175,6 +180,7 @@ static void ib_fmr_batch_release(struct
+ 	spin_unlock_irq(&pool->pool_lock);
+ }
+ 
++#ifdef HAVE_KTHREAD_QUEUE_WORK
+ static void ib_fmr_cleanup_func(struct kthread_work *work)
+ {
+ 	struct ib_fmr_pool *pool = container_of(work, struct ib_fmr_pool, work);
+@@ -189,6 +195,32 @@ static void ib_fmr_cleanup_func(struct k
+ 	if (atomic_read(&pool->flush_ser) - atomic_read(&pool->req_ser) < 0)
+ 		kthread_queue_work(pool->worker, &pool->work);
+ }
++#else /* HAVE_KTHREAD_QUEUE_WORK */
++static int ib_fmr_cleanup_thread(void *pool_ptr)
++{
++	struct ib_fmr_pool *pool = pool_ptr;
++
++	do {
++		if (atomic_read(&pool->flush_ser) - atomic_read(&pool->req_ser) < 0) {
++			ib_fmr_batch_release(pool);
++
++			atomic_inc(&pool->flush_ser);
++			wake_up_interruptible(&pool->force_wait);
++
++			if (pool->flush_function)
++				pool->flush_function(pool, pool->flush_arg);
++		}
++
++		set_current_state(TASK_INTERRUPTIBLE);
++		if (atomic_read(&pool->flush_ser) - atomic_read(&pool->req_ser) >= 0 &&
++		    !kthread_should_stop())
++			schedule();
++		__set_current_state(TASK_RUNNING);
++	} while (!kthread_should_stop());
++
++	return 0;
++}
++#endif /* HAVE_KTHREAD_QUEUE_WORK */
+ 
+ /**
+  * ib_create_fmr_pool - Create an FMR pool
+@@ -257,6 +289,7 @@ struct ib_fmr_pool *ib_create_fmr_pool(s
+ 	atomic_set(&pool->flush_ser, 0);
+ 	init_waitqueue_head(&pool->force_wait);
+ 
++#ifdef HAVE_KTHREAD_QUEUE_WORK
+ 	pool->worker =
+ 		kthread_create_worker(0, "ib_fmr(%s)", dev_name(&device->dev));
+ 	if (IS_ERR(pool->worker)) {
+@@ -265,6 +298,17 @@ struct ib_fmr_pool *ib_create_fmr_pool(s
+ 		goto out_free_pool;
+ 	}
+ 	kthread_init_work(&pool->work, ib_fmr_cleanup_func);
++#else
++	pool->thread = kthread_run(ib_fmr_cleanup_thread,
++				   pool,
++				   "ib_fmr(%s)",
++				   device->name);
++	if (IS_ERR(pool->thread)) {
++		pr_warn(PFX "couldn't start cleanup thread\n");
++		ret = PTR_ERR(pool->thread);
++		goto out_free_pool;
++	}
++#endif
+ 
+ 	{
+ 		struct ib_pool_fmr *fmr;
+@@ -329,7 +373,11 @@ void ib_destroy_fmr_pool(struct ib_fmr_p
+ 	LIST_HEAD(fmr_list);
+ 	int                 i;
+ 
++#ifdef HAVE_KTHREAD_QUEUE_WORK
+ 	kthread_destroy_worker(pool->worker);
++#else
++	kthread_stop(pool->thread);
++#endif
+ 	ib_fmr_batch_release(pool);
+ 
+ 	i = 0;
+@@ -379,7 +427,11 @@ int ib_flush_fmr_pool(struct ib_fmr_pool
+ 	spin_unlock_irq(&pool->pool_lock);
+ 
+ 	serial = atomic_inc_return(&pool->req_ser);
++#ifdef HAVE_KTHREAD_QUEUE_WORK
+ 	kthread_queue_work(pool->worker, &pool->work);
++#else
++	wake_up_process(pool->thread);
++#endif
+ 
+ 	if (wait_event_interruptible(pool->force_wait,
+ 				     atomic_read(&pool->flush_ser) - serial >= 0))
+@@ -491,7 +543,11 @@ void ib_fmr_pool_unmap(struct ib_pool_fm
+ 			list_add_tail(&fmr->list, &pool->dirty_list);
+ 			if (++pool->dirty_len >= pool->dirty_watermark) {
+ 				atomic_inc(&pool->req_ser);
++#ifdef HAVE_KTHREAD_QUEUE_WORK
+ 				kthread_queue_work(pool->worker, &pool->work);
++#else
++				wake_up_process(pool->thread);
++#endif
+ 			}
+ 		}
+ 	}

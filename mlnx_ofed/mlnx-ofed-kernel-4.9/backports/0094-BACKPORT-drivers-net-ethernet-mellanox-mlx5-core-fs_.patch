@@ -1,0 +1,187 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT:
+ drivers/net/ethernet/mellanox/mlx5/core/fs_counters.c
+
+Change-Id: I75de1dfbee41f6d7ec8436ec21c7754f47abf07b
+---
+ .../net/ethernet/mellanox/mlx5/core/fs_counters.c  | 71 ++++++++++++++++++++--
+ 1 file changed, 67 insertions(+), 4 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/fs_counters.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/fs_counters.c
+@@ -108,13 +108,46 @@ static void mlx5_fc_pool_release_counter
+  *   elapsed, the thread will actually query the hardware.
+  */
+ 
++#if defined(HAVE_IDR_RT)
++#define USE_IDR 1
++#elif defined(HAVE_IDR_GET_NEXT_EXPORTED) && defined(HAVE_IDR_ALLOC)
++/* for now, we want to use this if it's original kernel function and
++ * we don't define idr_* funcs ourselves, so it will be fast. */
++void *idr_get_next_ul(struct idr *idr, unsigned long *nextid)
++{
++	int next = (int) *nextid;
++	void *ret;
++
++	ret = idr_get_next(idr, &next);
++	*nextid = (unsigned long) next;
++
++	return ret;
++}
++int idr_alloc_u32(struct idr *idr, void *ptr, u32 *nextid,
++		  unsigned long max, gfp_t gfp)
++{
++	int err = idr_alloc(idr, ptr, *nextid, max + 1, gfp);
++
++	if (err < 0)
++		return err;
++
++	*nextid = err;
++
++	return 0;
++}
++#define USE_IDR 1
++#endif
++
+ static struct list_head *mlx5_fc_counters_lookup_next(struct mlx5_core_dev *dev,
+ 						      u32 id)
+ {
+ 	struct mlx5_fc_stats *fc_stats = &dev->priv.fc_stats;
++#ifdef USE_IDR
+ 	unsigned long next_id = (unsigned long)id + 1;
++#endif
+ 	struct mlx5_fc *counter;
+ 
++#ifdef USE_IDR
+ 	rcu_read_lock();
+ 	/* skip counters that are in idr, but not yet in counters list */
+ 	while ((counter = idr_get_next_ul(&fc_stats->counters_idr,
+@@ -122,8 +155,16 @@ static struct list_head *mlx5_fc_counter
+ 	       list_empty(&counter->list))
+ 		next_id++;
+ 	rcu_read_unlock();
+-
++#else
++	list_for_each_entry(counter, &fc_stats->counters, list)
++		if (counter->id > id)
++			return &counter->list;
++#endif
++#ifdef USE_IDR
+ 	return counter ? &counter->list : &fc_stats->counters;
++#else
++	return &fc_stats->counters;
++#endif
+ }
+ 
+ static void mlx5_fc_stats_insert(struct mlx5_core_dev *dev,
+@@ -137,13 +178,21 @@ static void mlx5_fc_stats_insert(struct
+ static void mlx5_fc_stats_remove(struct mlx5_core_dev *dev,
+ 				 struct mlx5_fc *counter)
+ {
++#ifdef USE_IDR
+ 	struct mlx5_fc_stats *fc_stats = &dev->priv.fc_stats;
++#endif
+ 
+ 	list_del(&counter->list);
+ 
++#ifdef USE_IDR
+ 	spin_lock(&fc_stats->counters_idr_lock);
++#ifdef HAVE_IDR_REMOVE_RETURN_VALUE 
+ 	WARN_ON(!idr_remove(&fc_stats->counters_idr, counter->id));
++#else
++	idr_remove(&fc_stats->counters_idr, counter->id);
++#endif
+ 	spin_unlock(&fc_stats->counters_idr_lock);
++#endif/*USE_IDR*/
+ }
+ 
+ static void fc_dummies_update(struct mlx5_fc *counter,
+@@ -333,21 +382,28 @@ struct mlx5_fc *mlx5_fc_create(struct ml
+ {
+ 	struct mlx5_fc *counter = mlx5_fc_acquire(dev, aging);
+ 	struct mlx5_fc_stats *fc_stats = &dev->priv.fc_stats;
++#ifdef USE_IDR
+ 	int err;
++#endif
+ 
+ 	if (IS_ERR(counter))
+ 		return counter;
+ 
++#ifdef USE_IDR
+ 	INIT_LIST_HEAD(&counter->list);
++#endif
+ 	counter->aging = aging;
+ 
+ 	if (aging) {
+-		u32 id = counter->id;
++#ifdef USE_IDR
++       	u32 id = counter->id;
++#endif
+ 
+ 		counter->cache.lastuse = jiffies;
+ 		counter->lastbytes = counter->cache.bytes;
+ 		counter->lastpackets = counter->cache.packets;
+ 
++#ifdef USE_IDR
+ 		idr_preload(GFP_KERNEL);
+ 		spin_lock(&fc_stats->counters_idr_lock);
+ 
+@@ -358,7 +414,7 @@ struct mlx5_fc *mlx5_fc_create(struct ml
+ 		idr_preload_end();
+ 		if (err)
+ 			goto err_out_alloc;
+-
++#endif
+ 		llist_add(&counter->addlist, &fc_stats->addlist);
+ 
+ 		mod_delayed_work(fc_stats->wq, &fc_stats->work, 0);
+@@ -366,9 +422,11 @@ struct mlx5_fc *mlx5_fc_create(struct ml
+ 
+ 	return counter;
+ 
++#ifdef USE_IDR
+ err_out_alloc:
+ 	mlx5_fc_release(dev, counter);
+ 	return ERR_PTR(err);
++#endif
+ }
+ EXPORT_SYMBOL(mlx5_fc_create);
+ 
+@@ -432,8 +490,10 @@ int mlx5_init_fc_stats(struct mlx5_core_
+ 	int max_bulk_len;
+ 	int max_out_len;
+ 
++#ifdef USE_IDR
+ 	spin_lock_init(&fc_stats->counters_idr_lock);
+ 	idr_init(&fc_stats->counters_idr);
++#endif
+ 	INIT_LIST_HEAD(&fc_stats->counters);
+ 	init_llist_head(&fc_stats->addlist);
+ 	init_llist_head(&fc_stats->dellist);
+@@ -478,7 +538,9 @@ void mlx5_cleanup_fc_stats(struct mlx5_c
+ 		mlx5_fc_release(dev, counter);
+ 
+ 	mlx5_fc_pool_cleanup(&fc_stats->fc_pool);
++#ifdef USE_IDR
+ 	idr_destroy(&fc_stats->counters_idr);
++#endif
+ 	kfree(fc_stats->bulk_query_out);
+ }
+ 
+@@ -504,6 +566,7 @@ void mlx5_fc_query_cached(struct mlx5_fc
+ 	counter->lastpackets = c.packets;
+ }
+ 
++#ifdef HAVE_TCF_TUNNEL_INFO
+ void mlx5_fc_queue_stats_work(struct mlx5_core_dev *dev,
+ 			      struct delayed_work *dwork,
+ 			      unsigned long delay)
+@@ -521,7 +584,7 @@ void mlx5_fc_update_sampling_interval(st
+ 	fc_stats->sampling_interval = min_t(unsigned long, interval,
+ 					    fc_stats->sampling_interval);
+ }
+-
++#endif
+ /* Flow counter bluks */
+ 
+ struct mlx5_fc_bulk {

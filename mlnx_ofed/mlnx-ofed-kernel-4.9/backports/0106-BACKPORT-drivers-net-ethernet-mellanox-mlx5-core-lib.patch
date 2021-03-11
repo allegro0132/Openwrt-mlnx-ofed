@@ -1,0 +1,36 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx5/core/lib/gid.c
+
+Change-Id: I79144005b01adc7004b9bba834a0a83d42c0f8bc
+---
+ drivers/net/ethernet/mellanox/mlx5/core/lib/gid.c | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/lib/gid.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/lib/gid.c
+@@ -45,9 +45,25 @@ void mlx5_init_reserved_gids(struct mlx5
+ 	dev->roce.reserved_gids.count = 0;
+ }
+ 
++#if !defined(HAVE_IDA_IS_EMPTY) && !defined(HAVE_IDR_IS_EMPTY)
++static int idr_has_entry(int id, void *p, void *data)
++{
++	return 1;
++}
++
++bool idr_is_empty(struct idr *idp)
++{
++	return !idr_for_each(idp, idr_has_entry, NULL);
++}
++#endif
++
+ void mlx5_cleanup_reserved_gids(struct mlx5_core_dev *dev)
+ {
++#ifdef HAVE_IDA_IS_EMPTY
+ 	WARN_ON(!ida_is_empty(&dev->roce.reserved_gids.ida));
++#else
++	WARN_ON(!idr_is_empty(&dev->roce.reserved_gids.ida.idr));
++#endif
+ 	dev->roce.reserved_gids.start = 0;
+ 	dev->roce.reserved_gids.count = 0;
+ 	ida_destroy(&dev->roce.reserved_gids.ida);

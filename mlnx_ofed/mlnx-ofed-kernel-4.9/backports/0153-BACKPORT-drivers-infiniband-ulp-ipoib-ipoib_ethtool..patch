@@ -1,0 +1,169 @@
+From: Feras Daoud <ferasda@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/ulp/ipoib/ipoib_ethtool.c
+
+Change-Id: Ic1616d1b7e4f4d5cbd6dc6c14b902f33323f112a
+---
+ drivers/infiniband/ulp/ipoib/ipoib_ethtool.c | 100 +++++++++++++++++++++++++++
+ 1 file changed, 100 insertions(+)
+
+--- a/drivers/infiniband/ulp/ipoib/ipoib_ethtool.c
++++ b/drivers/infiniband/ulp/ipoib/ipoib_ethtool.c
+@@ -41,9 +41,15 @@ struct ipoib_stats {
+ 	int stat_offset;
+ };
+ 
++#ifdef HAVE_RTNL_LINK_STATS64
+ #define IPOIB_NETDEV_STAT(m) { \
+ 		.stat_string = #m, \
+ 		.stat_offset = offsetof(struct rtnl_link_stats64, m) }
++#else
++#define IPOIB_NETDEV_STAT(m) { \
++		.stat_string = #m, \
++		.stat_offset = offsetof(struct rtnl_link_stats, m) }
++#endif
+ 
+ static const struct ipoib_stats ipoib_gstrings_stats[] = {
+ 	IPOIB_NETDEV_STAT(rx_packets),
+@@ -100,7 +106,11 @@ static int ipoib_set_ring_param(struct n
+ 		priv_current_flags = priv->flags;
+ 		dev_current_flags = dev->flags;
+ 
++#ifdef HAVE_DEV_CHANGE_FLAGS_HAS_3_PARAMS
+ 		dev_change_flags(dev, dev->flags & ~IFF_UP, NULL);
++#else
++		dev_change_flags(dev, dev->flags & ~IFF_UP);
++#endif
+ 		priv->rn_ops->ndo_uninit(dev);
+ 
+ 		do {
+@@ -136,7 +146,11 @@ static int ipoib_set_ring_param(struct n
+ 				dev->name, new_recvq_size, new_sendq_size);
+ 
+ 		if (dev_current_flags & IFF_UP)
++#ifdef HAVE_DEV_CHANGE_FLAGS_HAS_3_PARAMS
+ 			dev_change_flags(dev, dev_current_flags, NULL);
++#else
++			dev_change_flags(dev, dev_current_flags);
++#endif
+ 	}
+ 
+ 	return 0;
+@@ -212,6 +226,38 @@ static int ipoib_set_coalesce(struct net
+ 	return 0;
+ }
+ 
++#ifdef HAVE_ETHTOOL_GET_SET_SETTINGS
++static int ipoib_get_settings(struct net_device *dev, struct ethtool_cmd *ecmd)
++{
++	struct ipoib_dev_priv *priv = ipoib_priv(dev);
++	struct ib_port_attr attr;
++	char *speed = "";
++	int rate;/* in deci-Gb/sec */
++	int ret;
++
++	ret = ib_query_port(priv->ca, priv->port, &attr);
++	if (ret)
++		return ret;
++
++	ecmd->duplex = DUPLEX_FULL;
++	ecmd->autoneg = AUTONEG_DISABLE;
++	ecmd->phy_address = 255;
++	ecmd->port = PORT_OTHER;/* till define IB port type */
++
++	ib_active_speed_enum_to_rate(attr.active_speed,
++			&rate,
++			&speed);
++
++	rate *= ib_width_enum_to_int(attr.active_width);
++	if (rate < 0)
++		rate = -1;
++
++	ethtool_cmd_speed_set(ecmd, rate * 100);
++
++	return 0;
++}
++#endif
++
+ static void ipoib_get_ethtool_stats(struct net_device *dev,
+ 				    struct ethtool_stats __always_unused *stats,
+ 				    u64 *data)
+@@ -276,6 +322,7 @@ static inline int ib_speed_enum_to_int(i
+ 	return SPEED_UNKNOWN;
+ }
+ 
++#ifdef HAVE_GET_SET_LINK_KSETTINGS
+ static int ipoib_get_link_ksettings(struct net_device *netdev,
+ 				    struct ethtool_link_ksettings *cmd)
+ {
+@@ -313,18 +360,71 @@ static int ipoib_get_link_ksettings(stru
+ 
+ 	return 0;
+ }
++#endif
++
++#ifndef HAVE_NETDEV_HW_FEATURES
++#if defined(HAVE_GET_SET_FLAGS) && defined(CONFIG_COMPAT_LRO_ENABLED_IPOIB)
++int ipoib_set_flags(struct net_device *dev, u32 data)
++{
++	struct ipoib_dev_priv *priv = ipoib_priv(dev);
++	int hw_support_lro = 0;
++
++#ifdef HAVE_NETDEV_HW_FEATURES
++	hw_support_lro = priv->dev->hw_features & NETIF_F_RXCSUM;
++#else
++	hw_support_lro = priv->dev->features & NETIF_F_RXCSUM;
++#endif
++
++	if ((data & ETH_FLAG_LRO) && hw_support_lro)
++		dev->features |= NETIF_F_LRO;
++	else
++		dev->features &= ~NETIF_F_LRO;
++	return 0;
++}
++#endif
++#ifdef HAVE_GET_SET_RX_CSUM
++static u32 ipoib_get_rx_csum(struct net_device *dev)
++{
++	return dev->features & NETIF_F_RXCSUM;
++}
++#endif
++#endif
+ 
+ static const struct ethtool_ops ipoib_ethtool_ops = {
++#ifdef HAVE_GET_SET_LINK_KSETTINGS
+ 	.get_link_ksettings	= ipoib_get_link_ksettings,
++#endif
+ 	.get_drvinfo		= ipoib_get_drvinfo,
+ 	.get_coalesce		= ipoib_get_coalesce,
+ 	.set_coalesce		= ipoib_set_coalesce,
++#ifdef HAVE_ETHTOOL_GET_SET_SETTINGS
++	.get_settings           = ipoib_get_settings,
++#endif
+ 	.get_link		= ethtool_op_get_link,
+ 	.get_strings		= ipoib_get_strings,
+ 	.get_ethtool_stats	= ipoib_get_ethtool_stats,
+ 	.get_sset_count		= ipoib_get_sset_count,
+ 	.set_ringparam		= ipoib_set_ring_param,
+ 	.get_ringparam		= ipoib_get_ring_param,
++/* IPoIB current code supports HW_FEATURES and doesn't
++ * support EXTENDED_HW_FEATURES. If support for EXTENDED_HW_FEATURES
++ * is added then this code and the set function should be masked
++ *  with LEGACY_ETHTOOL_OPS.
++ */
++#ifndef HAVE_NETDEV_HW_FEATURES
++#ifdef HAVE_GET_SET_FLAGS
++#if defined (CONFIG_COMPAT_LRO_ENABLED_IPOIB)
++	.set_flags              = ipoib_set_flags,
++#endif
++	.get_flags              = ethtool_op_get_flags,
++#endif
++#ifdef HAVE_GET_SET_TSO
++	.set_tso                = ethtool_op_set_tso,
++#endif
++#ifdef HAVE_GET_SET_RX_CSUM
++	.get_rx_csum 		= ipoib_get_rx_csum,
++#endif
++#endif
+ };
+ 
+ void ipoib_set_ethtool_ops(struct net_device *dev)

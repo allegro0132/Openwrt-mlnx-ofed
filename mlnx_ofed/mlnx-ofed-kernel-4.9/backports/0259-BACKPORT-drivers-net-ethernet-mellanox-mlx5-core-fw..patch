@@ -1,0 +1,37 @@
+From: Mikhael Goikhman <migo@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx5/core/fw.c
+
+Change-Id: Ic41c2feee1b3da64fb4ba9d3684d6e771fe68fa9
+---
+ drivers/net/ethernet/mellanox/mlx5/core/fw.c | 13 ++++++++++---
+ 1 file changed, 10 insertions(+), 3 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/fw.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/fw.c
+@@ -645,8 +645,11 @@ static const struct mlxfw_dev_ops mlx5_m
+ };
+ 
+ int mlx5_firmware_flash(struct mlx5_core_dev *dev,
+-			const struct firmware *firmware,
+-			struct netlink_ext_ack *extack)
++			const struct firmware *firmware
++#ifdef HAVE_NETLINK_EXT_ACK
++			, struct netlink_ext_ack *extack
++#endif
++			)
+ {
+ 	struct mlx5_mlxfw_dev mlx5_mlxfw_dev = {
+ 		.mlxfw_dev = {
+@@ -666,7 +669,11 @@ int mlx5_firmware_flash(struct mlx5_core
+ 	}
+ 
+ 	return mlxfw_firmware_flash(&mlx5_mlxfw_dev.mlxfw_dev,
+-				    firmware, extack);
++				    firmware
++#ifdef HAVE_NETLINK_EXT_ACK
++				    , extack
++#endif
++				    );
+ }
+ 
+ static int query_other_hca_cap(struct mlx5_core_dev *mdev,

@@ -1,0 +1,136 @@
+From: Alaa Hleihel <alaa@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/hw/mlx4/main.c
+
+Change-Id: I91abcca50d3559fdcfeb05a4fbcf9d09a463a9df
+---
+ drivers/infiniband/hw/mlx4/main.c | 37 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 37 insertions(+)
+
+--- a/drivers/infiniband/hw/mlx4/main.c
++++ b/drivers/infiniband/hw/mlx4/main.c
+@@ -44,7 +44,9 @@
+ 
+ #include <net/ipv6.h>
+ #include <net/addrconf.h>
++#ifdef HAVE_DEVLINK_H
+ #include <net/devlink.h>
++#endif
+ 
+ #include <rdma/ib_smi.h>
+ #include <rdma/ib_user_verbs.h>
+@@ -61,6 +63,16 @@
+ #include "mlx4_ib.h"
+ #include <rdma/mlx4-abi.h>
+ 
++#ifdef DRV_NAME
++#undef DRV_NAME
++#endif
++#ifdef DRV_VERSION
++#undef DRV_VERSION
++#endif
++#ifdef DRV_RELDATE
++#undef DRV_RELDATE
++#endif
++
+ #define DRV_NAME	MLX4_IB_DRV_NAME
+ #define DRV_VERSION	"4.9-2.2.4"
+ 
+@@ -71,6 +83,9 @@
+ MODULE_AUTHOR("Roland Dreier");
+ MODULE_DESCRIPTION("Mellanox ConnectX HCA InfiniBand driver");
+ MODULE_LICENSE("Dual BSD/GPL");
++#ifdef RETPOLINE_MLNX
++MODULE_INFO(retpoline, "Y");
++#endif
+ 
+ int mlx4_ib_sm_guid_assign = 0;
+ module_param_named(sm_guid_assign, mlx4_ib_sm_guid_assign, int, 0444);
+@@ -82,6 +97,13 @@ module_param_named(en_ecn, en_ecn, bool,
+ MODULE_PARM_DESC(en_ecn, "Enable q/ecn [enable = 1, disable = 0 (default)]");
+ #endif
+ 
++#ifdef register_netdevice_notifier_rh
++#undef  register_netdevice_notifier
++#undef  unregister_netdevice_notifier
++#define register_netdevice_notifier             register_netdevice_notifier_rh
++#define unregister_netdevice_notifier           unregister_netdevice_notifier_rh
++#endif
++
+ extern bool roce_v1_noncompat_gid;
+ enum {
+ 	MAX_NUM_STR_BITMAP = 1 << 15,
+@@ -175,6 +197,7 @@ static struct net_device *mlx4_ib_get_ne
+ 	dev = mlx4_get_protocol_dev(ibdev->dev, MLX4_PROT_ETH, port_num);
+ 
+ 	if (dev) {
++#ifdef HAVE_BONDING_H
+ 		if (mlx4_is_bonded(ibdev->dev)) {
+ 			struct net_device *upper = NULL;
+ 
+@@ -187,6 +210,7 @@ static struct net_device *mlx4_ib_get_ne
+ 					dev = active;
+ 			}
+ 		}
++#endif
+ 	}
+ 	if (dev)
+ 		dev_hold(dev);
+@@ -1157,9 +1181,11 @@ static void mlx4_ib_dealloc_ucontext(str
+ 
+ }
+ 
++#if defined(HAVE_PUT_TASK_STRUCT_EXPORTED) && defined(HAVE_GET_TASK_PID_EXPORTED) && defined(HAVE_GET_PID_TASK_EXPORTED)
+ static void mlx4_ib_disassociate_ucontext(struct ib_ucontext *ibcontext)
+ {
+ }
++#endif
+ 
+ static int mlx4_ib_mmap(struct ib_ucontext *context, struct vm_area_struct *vma)
+ {
+@@ -2771,7 +2797,9 @@ static const struct ib_device_ops mlx4_i
+ 	.destroy_qp = mlx4_ib_destroy_qp,
+ 	.destroy_srq = mlx4_ib_destroy_srq,
+ 	.detach_mcast = mlx4_ib_mcg_detach,
++#if defined(HAVE_PUT_TASK_STRUCT_EXPORTED) && defined(HAVE_GET_TASK_PID_EXPORTED) && defined(HAVE_GET_PID_TASK_EXPORTED)
+ 	.disassociate_ucontext = mlx4_ib_disassociate_ucontext,
++#endif
+ 	.drain_rq = mlx4_ib_drain_rq,
+ 	.drain_sq = mlx4_ib_drain_sq,
+ 	.get_dev_fw_str = get_fw_ver_str,
+@@ -2807,6 +2835,9 @@ static const struct ib_device_ops mlx4_i
+ 	.exp_create_qp = mlx4_ib_exp_create_qp,
+ 	.exp_query_device	= mlx4_ib_exp_query_device,
+ 	.exp_ioctl         = mlx4_ib_exp_ioctl,
++#ifdef HAVE_MM_STRUCT_FREE_AREA_CACHE
++	.exp_get_unmapped_area = mlx4_ib_exp_get_unmapped_area,
++#endif
+ 
+ 	INIT_RDMA_OBJ_SIZE(ib_ah, mlx4_ib_ah, ibah),
+ 	INIT_RDMA_OBJ_SIZE(ib_pd, mlx4_ib_pd, ibpd),
+@@ -3142,9 +3173,11 @@ static void *mlx4_ib_add(struct mlx4_dev
+ 	}
+ 
+ 	ibdev->ib_active = true;
++#ifdef HAVE_DEVLINK_H
+ 	mlx4_foreach_port(i, dev, MLX4_PORT_TYPE_IB)
+ 		devlink_port_type_ib_set(mlx4_get_devlink_port(dev, i),
+ 					 &ibdev->ib_dev);
++#endif
+ 
+ 	if (mlx4_is_mfunc(ibdev->dev))
+ 		init_pkeys(ibdev);
+@@ -3279,10 +3312,14 @@ static void mlx4_ib_remove(struct mlx4_d
+ 	struct mlx4_ib_dev *ibdev = ibdev_ptr;
+ 	int dev_idx, ret;
+ 	int p;
++#ifdef HAVE_DEVLINK_H
+ 	int i;
++#endif
+ 
++#ifdef HAVE_DEVLINK_H
+ 	mlx4_foreach_port(i, dev, MLX4_PORT_TYPE_IB)
+ 		devlink_port_type_clear(mlx4_get_devlink_port(dev, i));
++#endif
+ 	ibdev->ib_active = false;
+ 	flush_workqueue(wq);
+ 

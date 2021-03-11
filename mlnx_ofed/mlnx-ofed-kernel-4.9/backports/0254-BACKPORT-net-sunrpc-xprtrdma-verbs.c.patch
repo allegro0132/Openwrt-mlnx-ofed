@@ -1,0 +1,248 @@
+From: Vasily Philipov <vasilyf@mellanox.com>
+Subject: [PATCH] BACKPORT: net/sunrpc/xprtrdma/verbs.c
+
+Change-Id: Iadb0a04249d1618894a9bae560f758c2e4227f5f
+Signed-off-by: Vasily Philipov <vasilyf@mellanox.com>
+---
+ net/sunrpc/xprtrdma/verbs.c | 63 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 63 insertions(+)
+
+--- a/net/sunrpc/xprtrdma/verbs.c
++++ b/net/sunrpc/xprtrdma/verbs.c
+@@ -54,13 +54,22 @@
+ #include <linux/sunrpc/addr.h>
+ #include <linux/sunrpc/svc_rdma.h>
+ 
++#include <linux/version.h>
++
++#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(4,15,0)) || \
++	(defined(RHEL_MAJOR) && ((RHEL_MAJOR == 7 && RHEL_MINOR >= 6) || \
++	RHEL_MAJOR >= 8)))
+ #include <asm-generic/barrier.h>
++#endif
++
+ #include <asm/bitops.h>
+ 
+ #include <rdma/ib_cm.h>
+ 
+ #include "xprt_rdma.h"
++#ifdef HAVE_TRACE_RPCRDMA_H
+ #include <trace/events/rpcrdma.h>
++#endif
+ 
+ /*
+  * Globals/Macros
+@@ -115,11 +124,13 @@ static void rpcrdma_xprt_drain(struct rp
+ static void
+ rpcrdma_qp_event_handler(struct ib_event *event, void *context)
+ {
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	struct rpcrdma_ep *ep = context;
+ 	struct rpcrdma_xprt *r_xprt = container_of(ep, struct rpcrdma_xprt,
+ 						   rx_ep);
+ 
+ 	trace_xprtrdma_qp_event(r_xprt, event);
++#endif
+ }
+ 
+ /**
+@@ -136,7 +147,9 @@ rpcrdma_wc_send(struct ib_cq *cq, struct
+ 		container_of(cqe, struct rpcrdma_sendctx, sc_cqe);
+ 
+ 	/* WARNING: Only wr_cqe and status are reliable at this point */
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_xprtrdma_wc_send(sc, wc);
++#endif
+ 	rpcrdma_sendctx_put_locked(sc);
+ }
+ 
+@@ -155,7 +168,9 @@ rpcrdma_wc_receive(struct ib_cq *cq, str
+ 	struct rpcrdma_xprt *r_xprt = rep->rr_rxprt;
+ 
+ 	/* WARNING: Only wr_cqe and status are reliable at this point */
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_xprtrdma_wc_receive(wc);
++#endif
+ 	--r_xprt->rx_ep.rep_receive_count;
+ 	if (wc->status != IB_WC_SUCCESS)
+ 		goto out_flushed;
+@@ -225,7 +240,9 @@ rpcrdma_cm_event_handler(struct rdma_cm_
+ 
+ 	might_sleep();
+ 
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_xprtrdma_cm_event(r_xprt, event);
++#endif
+ 	switch (event->event) {
+ 	case RDMA_CM_EVENT_ADDR_RESOLVED:
+ 	case RDMA_CM_EVENT_ROUTE_RESOLVED:
+@@ -297,7 +314,9 @@ rpcrdma_create_id(struct rpcrdma_xprt *x
+ 	struct rdma_cm_id *id;
+ 	int rc;
+ 
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_xprtrdma_conn_start(xprt);
++#endif
+ 
+ 	init_completion(&ia->ri_done);
+ 	init_completion(&ia->ri_remove_done);
+@@ -315,7 +334,9 @@ rpcrdma_create_id(struct rpcrdma_xprt *x
+ 		goto out;
+ 	rc = wait_for_completion_interruptible_timeout(&ia->ri_done, wtimeout);
+ 	if (rc < 0) {
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 		trace_xprtrdma_conn_tout(xprt);
++#endif
+ 		goto out;
+ 	}
+ 
+@@ -329,7 +350,9 @@ rpcrdma_create_id(struct rpcrdma_xprt *x
+ 		goto out;
+ 	rc = wait_for_completion_interruptible_timeout(&ia->ri_done, wtimeout);
+ 	if (rc < 0) {
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 		trace_xprtrdma_conn_tout(xprt);
++#endif
+ 		goto out;
+ 	}
+ 	rc = ia->ri_async_rc;
+@@ -445,7 +468,9 @@ rpcrdma_ia_remove(struct rpcrdma_ia *ia)
+ 	/* Allow waiters to continue */
+ 	complete(&ia->ri_remove_done);
+ 
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_xprtrdma_remove(r_xprt);
++#endif
+ }
+ 
+ /**
+@@ -614,7 +639,9 @@ static int rpcrdma_ep_recreate_xprt(stru
+ 	struct rpcrdma_ep *ep = &r_xprt->rx_ep;
+ 	int rc, err;
+ 
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_xprtrdma_reinsert(r_xprt);
++#endif
+ 
+ 	rc = -EHOSTUNREACH;
+ 	if (rpcrdma_ia_open(r_xprt))
+@@ -653,7 +680,9 @@ static int rpcrdma_ep_reconnect(struct r
+ 	struct rdma_cm_id *id, *old;
+ 	int err, rc;
+ 
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_xprtrdma_reconnect(r_xprt);
++#endif
+ 
+ 	rpcrdma_ep_disconnect(&r_xprt->rx_ep, ia);
+ 
+@@ -779,7 +808,9 @@ rpcrdma_ep_disconnect(struct rpcrdma_ep
+ 							ep->rep_connected != 1);
+ 	else
+ 		ep->rep_connected = rc;
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_xprtrdma_disconnect(r_xprt, rc);
++#endif
+ 
+ 	rpcrdma_xprt_drain(r_xprt);
+ }
+@@ -980,7 +1011,9 @@ rpcrdma_mrs_create(struct rpcrdma_xprt *
+ 	list_splice(&all, &buf->rb_all);
+ 	r_xprt->rx_stats.mrs_allocated += count;
+ 	spin_unlock(&buf->rb_mrlock);
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_xprtrdma_createmrs(r_xprt, count);
++#endif
+ 
+ 	xprt_write_space(&r_xprt->rx_xprt);
+ }
+@@ -1100,6 +1133,9 @@ int rpcrdma_buffer_create(struct rpcrdma
+ 	spin_lock_init(&buf->rb_lock);
+ 	INIT_LIST_HEAD(&buf->rb_mrs);
+ 	INIT_LIST_HEAD(&buf->rb_all);
++#ifndef HAVE_XPRT_PIN_RQST
++	INIT_LIST_HEAD(&buf->rb_pending);
++#endif
+ 	INIT_DELAYED_WORK(&buf->rb_refresh_worker,
+ 			  rpcrdma_mr_refresh_worker);
+ 
+@@ -1147,6 +1183,19 @@ static void rpcrdma_rep_destroy(struct r
+ 	kfree(rep);
+ }
+ 
++#ifndef HAVE_XPRT_PIN_RQST
++void rpcrdma_recv_buffer_put_locked(struct rpcrdma_rep *rep)
++{
++	struct rpcrdma_buffer *buffers = &rep->rr_rxprt->rx_buf;
++
++	if (!rep->rr_temp) {
++		list_add(&rep->rr_list, &buffers->rb_recv_bufs);
++	} else {
++		rpcrdma_rep_destroy(rep);
++	}
++}
++#endif
++
+ /**
+  * rpcrdma_req_destroy - Destroy an rpcrdma_req object
+  * @req: unused object to be destroyed
+@@ -1259,7 +1308,9 @@ rpcrdma_mr_get(struct rpcrdma_xprt *r_xp
+ 	return mr;
+ 
+ out_nomrs:
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_xprtrdma_nomrs(r_xprt);
++#endif
+ 	if (r_xprt->rx_ep.rep_connected != -ENODEV)
+ 		schedule_delayed_work(&buf->rb_refresh_worker, 0);
+ 
+@@ -1299,7 +1350,9 @@ rpcrdma_mr_unmap_and_put(struct rpcrdma_
+ 	struct rpcrdma_xprt *r_xprt = mr->mr_xprt;
+ 
+ 	if (mr->mr_dir != DMA_NONE) {
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 		trace_xprtrdma_mr_unmap(mr);
++#endif
+ 		ib_dma_unmap_sg(r_xprt->rx_ia.ri_id->device,
+ 				mr->mr_sg, mr->mr_nents, mr->mr_dir);
+ 		mr->mr_dir = DMA_NONE;
+@@ -1441,7 +1494,9 @@ bool __rpcrdma_regbuf_dma_map(struct rpc
+ 	rb->rg_iov.addr = ib_dma_map_single(device, rdmab_data(rb),
+ 					    rdmab_length(rb), rb->rg_direction);
+ 	if (ib_dma_mapping_error(device, rdmab_addr(rb))) {
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 		trace_xprtrdma_dma_maperr(rdmab_addr(rb));
++#endif
+ 		return false;
+ 	}
+ 
+@@ -1498,7 +1553,9 @@ rpcrdma_ep_post(struct rpcrdma_ia *ia,
+ 	}
+ 
+ 	rc = frwr_send(ia, req);
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_xprtrdma_post_send(req, rc);
++#endif
+ 	if (rc)
+ 		return -ENOTCONN;
+ 	return 0;
+@@ -1545,7 +1602,9 @@ rpcrdma_post_recvs(struct rpcrdma_xprt *
+ 			break;
+ 		}
+ 
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 		trace_xprtrdma_post_recv(rep->rr_recv_wr.wr_cqe);
++#endif
+ 		rep->rr_recv_wr.next = wr;
+ 		wr = &rep->rr_recv_wr;
+ 		++count;
+@@ -1567,5 +1626,9 @@ rpcrdma_post_recvs(struct rpcrdma_xprt *
+ 	}
+ 	ep->rep_receive_count += count;
+ out:
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_xprtrdma_post_recvs(r_xprt, count, rc);
++#else
++	return;
++#endif
+ }

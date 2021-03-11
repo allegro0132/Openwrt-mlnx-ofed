@@ -1,0 +1,150 @@
+From: Vasily Philipov <vasilyf@mellanox.com>
+Subject: [PATCH] BACKPORT: net/sunrpc/xprtrdma/svc_rdma_transport.c
+
+Change-Id: Ic502f4ae258a8ed0c6a81e29772b6ad0f7080d53
+Signed-off-by: Vasily Philipov <vasilyf@mellanox.com>
+---
+ net/sunrpc/xprtrdma/svc_rdma_transport.c | 44 ++++++++++++++++++++++++++++++++
+ 1 file changed, 44 insertions(+)
+
+--- a/net/sunrpc/xprtrdma/svc_rdma_transport.c
++++ b/net/sunrpc/xprtrdma/svc_rdma_transport.c
+@@ -60,7 +60,10 @@
+ #include <linux/sunrpc/svc_rdma.h>
+ 
+ #include "xprt_rdma.h"
++
++#ifdef HAVE_TRACE_RPCRDMA_H
+ #include <trace/events/rpcrdma.h>
++#endif
+ 
+ #define RPCDBG_FACILITY	RPCDBG_SVCXPRT
+ 
+@@ -75,16 +78,34 @@ static void svc_rdma_release_rqst(struct
+ static void svc_rdma_detach(struct svc_xprt *xprt);
+ static void svc_rdma_free(struct svc_xprt *xprt);
+ static int svc_rdma_has_wspace(struct svc_xprt *xprt);
++#ifdef HAVE_XPO_SECURE_PORT_NO_RETURN
+ static void svc_rdma_secure_port(struct svc_rqst *);
++#else
++static int svc_rdma_secure_port(struct svc_rqst *);
++#endif
++
+ static void svc_rdma_kill_temp_xprt(struct svc_xprt *);
+ 
++#ifdef HAVE_SVC_XPRT_XPO_PREP_REPLY_HDR
++static void svc_rdma_prep_reply_hdr(struct svc_rqst *rqstp)
++{
++}
++#endif
++
++#ifdef HAVE_SVC_XPRT_CLASS_XCL_OPS_CONST
+ static const struct svc_xprt_ops svc_rdma_ops = {
++#else
++static struct svc_xprt_ops svc_rdma_ops = {
++#endif
+ 	.xpo_create = svc_rdma_create,
+ 	.xpo_recvfrom = svc_rdma_recvfrom,
+ 	.xpo_sendto = svc_rdma_sendto,
+ 	.xpo_release_rqst = svc_rdma_release_rqst,
+ 	.xpo_detach = svc_rdma_detach,
+ 	.xpo_free = svc_rdma_free,
++#ifdef HAVE_SVC_XPRT_XPO_PREP_REPLY_HDR
++	.xpo_prep_reply_hdr = svc_rdma_prep_reply_hdr,
++#endif
+ 	.xpo_has_wspace = svc_rdma_has_wspace,
+ 	.xpo_accept = svc_rdma_accept,
+ 	.xpo_secure_port = svc_rdma_secure_port,
+@@ -104,7 +125,9 @@ static void qp_event_handler(struct ib_e
+ {
+ 	struct svc_xprt *xprt = context;
+ 
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_svcrdma_qp_error(event, (struct sockaddr *)&xprt->xpt_remote);
++#endif
+ 	switch (event->event) {
+ 	/* These are considered benign events */
+ 	case IB_EVENT_PATH_MIG:
+@@ -241,9 +264,11 @@ static void handle_connect_req(struct rd
+ static int rdma_listen_handler(struct rdma_cm_id *cma_id,
+ 			       struct rdma_cm_event *event)
+ {
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	struct sockaddr *sap = (struct sockaddr *)&cma_id->route.addr.src_addr;
+ 
+ 	trace_svcrdma_cm_event(event, sap);
++#endif
+ 
+ 	switch (event->event) {
+ 	case RDMA_CM_EVENT_CONNECT_REQUEST:
+@@ -266,11 +291,15 @@ static int rdma_listen_handler(struct rd
+ static int rdma_cma_handler(struct rdma_cm_id *cma_id,
+ 			    struct rdma_cm_event *event)
+ {
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	struct sockaddr *sap = (struct sockaddr *)&cma_id->route.addr.dst_addr;
++#endif
+ 	struct svcxprt_rdma *rdma = cma_id->context;
+ 	struct svc_xprt *xprt = &rdma->sc_xprt;
+ 
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_svcrdma_cm_event(event, sap);
++#endif
+ 
+ 	switch (event->event) {
+ 	case RDMA_CM_EVENT_ESTABLISHED:
+@@ -326,7 +355,9 @@ static struct svc_xprt *svc_rdma_create(
+ 	if (!cma_xprt)
+ 		return ERR_PTR(-ENOMEM);
+ 	set_bit(XPT_LISTENER, &cma_xprt->sc_xprt.xpt_flags);
++#ifdef HAVE_SVC_XPRT_XPT_REMOTEBUF
+ 	strcpy(cma_xprt->sc_xprt.xpt_remotebuf, "listener");
++#endif
+ 
+ 	listen_id = rdma_create_id(net, rdma_listen_handler, cma_xprt,
+ 				   RDMA_PS_TCP, IB_QPT_RC);
+@@ -543,12 +574,16 @@ static struct svc_xprt *svc_rdma_accept(
+ 	dprintk("    ord             : %d\n", conn_param.initiator_depth);
+ #endif
+ 
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_svcrdma_xprt_accept(&newxprt->sc_xprt);
++#endif
+ 	return &newxprt->sc_xprt;
+ 
+  errout:
+ 	dprintk("svcrdma: failure accepting new connection rc=%d.\n", ret);
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_svcrdma_xprt_fail(&newxprt->sc_xprt);
++#endif
+ 	/* Take a reference in case the DTO handler runs */
+ 	svc_xprt_get(&newxprt->sc_xprt);
+ 	if (newxprt->sc_qp && !IS_ERR(newxprt->sc_qp))
+@@ -590,7 +625,9 @@ static void __svc_rdma_free(struct work_
+ 		container_of(work, struct svcxprt_rdma, sc_work);
+ 	struct svc_xprt *xprt = &rdma->sc_xprt;
+ 
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_svcrdma_xprt_free(xprt);
++#endif
+ 
+ 	if (rdma->sc_qp && !IS_ERR(rdma->sc_qp))
+ 		ib_drain_qp(rdma->sc_qp);
+@@ -650,10 +687,17 @@ static int svc_rdma_has_wspace(struct sv
+ 	return 1;
+ }
+ 
++#ifdef HAVE_XPO_SECURE_PORT_NO_RETURN
+ static void svc_rdma_secure_port(struct svc_rqst *rqstp)
+ {
+ 	set_bit(RQ_SECURE, &rqstp->rq_flags);
+ }
++#else
++static int svc_rdma_secure_port(struct svc_rqst *rqstp)
++{
++   return 1;
++}
++#endif
+ 
+ static void svc_rdma_kill_temp_xprt(struct svc_xprt *xprt)
+ {

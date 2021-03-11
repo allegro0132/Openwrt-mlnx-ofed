@@ -1,0 +1,252 @@
+From: root <root@mti-swat9.mti.labs.mlnx>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx5/core/eswitch.c
+
+Change-Id: I801847396dc85cad0ce8f062ec036b204bfd06bc
+---
+ drivers/net/ethernet/mellanox/mlx5/core/eswitch.c | 86 ++++++++++++++++++-----
+ 1 file changed, 69 insertions(+), 17 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/eswitch.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/eswitch.c
+@@ -64,7 +64,11 @@ struct vport_addr {
+ 	bool mc_promisc;
+ };
+ 
++#ifdef HAVE_IDA_SIMPLE_GET
+ DEFINE_IDA(mlx5e_vport_match_ida);
++#else
++static DECLARE_BITMAP(mlx5e_vport_match_map, VHCA_VPORT_MATCH_ID_SIZE);
++#endif
+ DEFINE_MUTEX(mlx5e_vport_match_ida_mutex);
+ 
+ u16 esw_get_unique_match_id(void)
+@@ -72,8 +76,15 @@ u16 esw_get_unique_match_id(void)
+ 	u16 match_id;
+ 
+ 	mutex_lock(&mlx5e_vport_match_ida_mutex);
++#ifdef HAVE_IDA_SIMPLE_GET
+ 	match_id = ida_simple_get(&mlx5e_vport_match_ida, 0,
+ 				  VHCA_VPORT_MATCH_ID_SIZE, GFP_KERNEL);
++#else
++	match_id = find_first_zero_bit(mlx5e_vport_match_map,
++				       VHCA_VPORT_MATCH_ID_SIZE);
++	if (match_id < VHCA_VPORT_MATCH_ID_SIZE)
++		bitmap_set(mlx5e_vport_match_map, match_id, 1);
++#endif
+ 	mutex_unlock(&mlx5e_vport_match_ida_mutex);
+ 
+ 	return match_id;
+@@ -626,6 +637,7 @@ static void update_allmulti_vports(struc
+ 	u8 *mac = vaddr->node.addr;
+ 	struct mlx5_vport *vport;
+ 	u16 i, vport_num;
++	COMPAT_HL_NODE
+ 
+ 	mlx5_esw_for_all_vports(esw, i, vport) {
+ 		struct hlist_head *vport_hash = vport->mc_list;
+@@ -673,6 +685,7 @@ static int esw_add_mc_addr(struct mlx5_e
+ 	struct esw_mc_addr *esw_mc;
+ 	u8 *mac = vaddr->node.addr;
+ 	u16 vport = vaddr->vport;
++	COMPAT_HL_NODE
+ 
+ 	if (!esw->fdb_table.legacy.fdb)
+ 		return 0;
+@@ -713,6 +726,7 @@ static int esw_del_mc_addr(struct mlx5_e
+ 	struct esw_mc_addr *esw_mc;
+ 	u8 *mac = vaddr->node.addr;
+ 	u16 vport = vaddr->vport;
++	COMPAT_HL_NODE
+ 
+ 	if (!esw->fdb_table.legacy.fdb)
+ 		return 0;
+@@ -763,6 +777,7 @@ static void esw_apply_vport_addr_list(st
+ 	struct hlist_head *hash;
+ 	struct hlist_node *tmp;
+ 	int hi;
++	COMPAT_HL_NODE
+ 
+ 	vport_addr_add = is_uc ? esw_add_uc_addr :
+ 				 esw_add_mc_addr;
+@@ -799,6 +814,7 @@ static void esw_update_vport_addr_list(s
+ 	int err;
+ 	int hi;
+ 	int i;
++	COMPAT_HL_NODE
+ 
+ 	size = is_uc ? MLX5_MAX_UC_PER_VPORT(esw->dev) :
+ 		       MLX5_MAX_MC_PER_VPORT(esw->dev);
+@@ -920,6 +936,7 @@ static void esw_update_vport_mc_promisc(
+ 	struct hlist_head *hash;
+ 	struct hlist_node *tmp;
+ 	int hi;
++	COMPAT_HL_NODE
+ 
+ 	hash = vport->mc_list;
+ 
+@@ -2591,10 +2608,14 @@ int mlx5_eswitch_init(struct mlx5_core_d
+ 	if (err)
+ 		goto abort;
+ 
++#ifdef HAVE_TCF_TUNNEL_INFO
+ 	mutex_init(&esw->offloads.encap_tbl_lock);
+ 	hash_init(esw->offloads.encap_tbl);
++#endif
++#ifdef HAVE_TCF_PEDIT_TCFP_KEYS_EX
+ 	mutex_init(&esw->offloads.mod_hdr.lock);
+ 	hash_init(esw->offloads.mod_hdr.hlist);
++#endif
+ 	atomic64_set(&esw->offloads.num_flows, 0);
+ 	mutex_init(&esw->state_lock);
+ 	mutex_init(&esw->mode_lock);
+@@ -2608,7 +2629,11 @@ int mlx5_eswitch_init(struct mlx5_core_d
+ 		vport->info.vlan_proto = htons(ETH_P_8021Q);
+ 		vport->info.roce = true;
+ 		vport->match_id = esw_get_unique_match_id();
++#ifdef HAVE_IDA_SIMPLE_GET
+ 		if (vport->match_id < 0) {
++#else
++		if (vport->match_id >= VHCA_VPORT_MATCH_ID_SIZE) {
++#endif
+ 			err = -ENOSPC;
+ 			goto abort;
+ 		}
+@@ -2646,8 +2671,12 @@ abort:
+ 	mlx5_esw_for_all_vports(esw, j, vport) {
+ 		if (j == i)
+ 			break;
++#ifdef HAVE_IDA_SIMPLE_GET
+ 		ida_simple_remove(&mlx5e_vport_match_ida,
+ 				  esw->vports[j].match_id);
++#else
++		bitmap_clear(mlx5e_vport_match_map, esw->vports[j].match_id, 1);
++#endif
+ 	}
+ 	mutex_unlock(&mlx5e_vport_match_ida_mutex);
+ 	kfree(esw->vports);
+@@ -2705,7 +2734,11 @@ void mlx5_eswitch_cleanup(struct mlx5_es
+ 	esw->dev->priv.eswitch = NULL;
+ 	mutex_lock(&mlx5e_vport_match_ida_mutex);
+ 	mlx5_esw_for_all_vports(esw, i, vport)
++#ifdef HAVE_IDA_SIMPLE_GET
+ 		ida_simple_remove(&mlx5e_vport_match_ida, vport->match_id);
++#else
++		bitmap_clear(mlx5e_vport_match_map, vport->match_id, 1);
++#endif
+ 	mutex_unlock(&mlx5e_vport_match_ida_mutex);
+ 	flush_work(&esw->handler.start_handler);
+ 	flush_work(&esw->handler.stop_handler);
+@@ -2713,8 +2746,10 @@ void mlx5_eswitch_cleanup(struct mlx5_es
+ 	esw_offloads_cleanup_reps(esw);
+ 	mutex_destroy(&esw->mode_lock);
+ 	mutex_destroy(&esw->state_lock);
++#ifdef HAVE_TCF_PEDIT_TCFP_KEYS_EX
+ 	mutex_destroy(&esw->offloads.mod_hdr.lock);
+ 	mutex_destroy(&esw->offloads.encap_tbl_lock);
++#endif
+ 	kfree(esw->vports);
+ 	kfree(esw);
+ }
+@@ -2906,6 +2941,7 @@ unlock:
+ 	return err;
+ }
+ 
++#ifdef HAVE_IFLA_VF_INFO
+ int mlx5_eswitch_get_vport_config(struct mlx5_eswitch *esw,
+ 				  u16 vport, struct ifla_vf_info *ivi)
+ {
+@@ -2919,18 +2955,31 @@ int mlx5_eswitch_get_vport_config(struct
+ 
+ 	mutex_lock(&esw->state_lock);
+ 	ether_addr_copy(ivi->mac, evport->info.mac);
+-	ivi->linkstate = evport->info.link_state;
+-	ivi->vlan = evport->info.vlan;
+-	ivi->qos = evport->info.qos;
+-	ivi->vlan_proto = evport->info.vlan_proto;
+-	ivi->spoofchk = evport->info.spoofchk;
+-	ivi->trusted = evport->info.trusted;
+-	ivi->min_tx_rate = evport->info.min_rate;
+-	ivi->max_tx_rate = evport->info.max_rate;
+-	mutex_unlock(&esw->state_lock);
++#ifdef HAVE_LINKSTATE
++       ivi->linkstate = evport->info.link_state;
++#endif
++       ivi->vlan = evport->info.vlan;
++       ivi->qos = evport->info.qos;
++#ifdef HAVE_VF_VLAN_PROTO
++       ivi->vlan_proto = evport->info.vlan_proto;
++#endif
++#ifdef HAVE_VF_INFO_SPOOFCHK
++       ivi->spoofchk = evport->info.spoofchk;
++#endif
++#ifdef HAVE_VF_INFO_TRUST
++       ivi->trusted = evport->info.trusted;
++#endif
++#ifdef HAVE_VF_TX_RATE_LIMITS
++       ivi->min_tx_rate = evport->info.min_rate;
++       ivi->max_tx_rate = evport->info.max_rate;
++#else
++	ivi->tx_rate = evport->info.max_rate;
++#endif
++       mutex_unlock(&esw->state_lock);
+ 
+-	return 0;
++       return 0;
+ }
++#endif
+ 
+ int __mlx5_eswitch_set_vport_vlan(struct mlx5_eswitch *esw, int vport, u16 vlan,
+ 				  u8 qos, __be16 proto, u8 set_flags)
+@@ -3284,6 +3333,7 @@ int mlx5_eswitch_set_vport_rate(struct m
+ 	bool min_rate_supported;
+ 	bool max_rate_supported;
+ 	int err = 0;
++	u32 act_max_rate = max_rate;
+ 
+ 	if (!ESW_ALLOWED(esw))
+ 		return -EPERM;
+@@ -3294,7 +3344,6 @@ int mlx5_eswitch_set_vport_rate(struct m
+ 	min_rate_supported = MLX5_CAP_QOS(esw->dev, esw_bw_share) &&
+ 				fw_max_bw_share >= MLX5_MIN_BW_SHARE;
+ 	max_rate_supported = MLX5_CAP_QOS(esw->dev, esw_rate_limit);
+-	u32 act_max_rate = max_rate;
+ 
+ 	if ((min_rate && !min_rate_supported) || (max_rate && !max_rate_supported))
+ 		return -EOPNOTSUPP;
+@@ -3579,7 +3628,9 @@ int mlx5_eswitch_get_vport_stats(struct
+ 	struct mlx5_vport *vport = mlx5_eswitch_get_vport(esw, vport_num);
+ 	int outlen = MLX5_ST_SZ_BYTES(query_vport_counter_out);
+ 	u32 in[MLX5_ST_SZ_DW(query_vport_counter_in)] = {0};
++#ifdef HAVE_STRUCT_IFLA_VF_STATS_RX_TX_DROPPED
+ 	struct mlx5_vport_drop_stats stats = {0};
++#endif
+ 	int err = 0;
+ 	u32 *out;
+ 
+@@ -3643,11 +3694,13 @@ int mlx5_eswitch_get_vport_stats(struct
+ 	vf_stats->broadcast =
+ 		MLX5_GET_CTR(out, received_eth_broadcast.packets);
+ 
+-	err = mlx5_eswitch_query_vport_drop_stats(esw->dev, vport, &stats);
+-	if (err)
+-		goto free_out;
+-	vf_stats->rx_dropped = stats.rx_dropped;
+-	vf_stats->tx_dropped = stats.tx_dropped;
++#ifdef HAVE_STRUCT_IFLA_VF_STATS_RX_TX_DROPPED
++       err = mlx5_eswitch_query_vport_drop_stats(esw->dev, vport, &stats);
++       if (err)
++       	goto free_out;
++       vf_stats->rx_dropped = stats.rx_dropped;
++       vf_stats->tx_dropped = stats.tx_dropped;
++#endif
+ #ifdef HAVE_STRUCT_IFLA_VF_STATS_TX_BROADCAST
+ 	vf_stats->tx_multicast =
+ 		MLX5_GET_CTR(out, transmitted_eth_multicast.packets) +
+@@ -3670,7 +3723,6 @@ int mlx5_eswitch_get_vport_stats_backpor
+ 	int outlen = MLX5_ST_SZ_BYTES(query_vport_counter_out);
+ 	u32 in[MLX5_ST_SZ_DW(query_vport_counter_in)] = {0};
+ 	int err = 0;
+-	bool vst_mode_steering;
+ 	u32 *out;
+ 
+ 	if (!ESW_ALLOWED(esw))

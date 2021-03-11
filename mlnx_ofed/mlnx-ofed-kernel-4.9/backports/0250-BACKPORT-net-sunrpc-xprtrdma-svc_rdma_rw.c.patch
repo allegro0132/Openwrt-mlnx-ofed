@@ -1,0 +1,176 @@
+From: Vasily Philipov <vasilyf@mellanox.com>
+Subject: [PATCH] BACKPORT: net/sunrpc/xprtrdma/svc_rdma_rw.c
+
+Change-Id: I7d3328b6693f0371a5ffaf22e17ff3f36acbeef6
+Signed-off-by: Vasily Philipov <vasilyf@mellanox.com>
+---
+ net/sunrpc/xprtrdma/svc_rdma_rw.c | 32 ++++++++++++++++++++++++++++++++
+ 1 file changed, 32 insertions(+)
+
+--- a/net/sunrpc/xprtrdma/svc_rdma_rw.c
++++ b/net/sunrpc/xprtrdma/svc_rdma_rw.c
+@@ -12,7 +12,10 @@
+ #include <linux/sunrpc/debug.h>
+ 
+ #include "xprt_rdma.h"
++
++#ifdef HAVE_TRACE_RPCRDMA_H
+ #include <trace/events/rpcrdma.h>
++#endif
+ 
+ #define RPCDBG_FACILITY	RPCDBG_SVCXPRT
+ 
+@@ -72,8 +75,16 @@ svc_rdma_get_rw_ctxt(struct svcxprt_rdma
+ 	}
+ 
+ 	ctxt->rw_sg_table.sgl = ctxt->rw_first_sgl;
++#ifdef HAVE_SG_ALLOC_TABLE_CHAINED_NENTS_FIRST_CHUNK_PARAM
++	if (sg_alloc_table_chained(&ctxt->rw_sg_table, sges,
++				ctxt->rw_sg_table.sgl, SG_CHUNK_SIZE)) {
++#else
+ 	if (sg_alloc_table_chained(&ctxt->rw_sg_table, sges,
++#ifdef HAVE_SG_ALLOC_TABLE_CHAINED_GFP_MASK
++				   GFP_ATOMIC,
++#endif
+ 				   ctxt->rw_sg_table.sgl)) {
++#endif
+ 		kfree(ctxt);
+ 		ctxt = NULL;
+ 	}
+@@ -84,7 +95,11 @@ out:
+ static void svc_rdma_put_rw_ctxt(struct svcxprt_rdma *rdma,
+ 				 struct svc_rdma_rw_ctxt *ctxt)
+ {
++#ifdef HAVE_SG_ALLOC_TABLE_CHAINED_NENTS_FIRST_CHUNK_PARAM
++	sg_free_table_chained(&ctxt->rw_sg_table, SG_CHUNK_SIZE);
++#else
+ 	sg_free_table_chained(&ctxt->rw_sg_table, true);
++#endif
+ 
+ 	spin_lock(&rdma->sc_rw_ctxt_lock);
+ 	list_add(&ctxt->rw_list, &rdma->sc_rw_ctxts);
+@@ -207,7 +222,9 @@ static void svc_rdma_write_done(struct i
+ 	struct svc_rdma_write_info *info =
+ 			container_of(cc, struct svc_rdma_write_info, wi_cc);
+ 
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_svcrdma_wc_write(wc);
++#endif
+ 
+ 	atomic_add(cc->cc_sqecount, &rdma->sc_sq_avail);
+ 	wake_up(&rdma->sc_send_wait);
+@@ -265,7 +282,9 @@ static void svc_rdma_wc_read_done(struct
+ 	struct svc_rdma_read_info *info =
+ 			container_of(cc, struct svc_rdma_read_info, ri_cc);
+ 
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_svcrdma_wc_read(wc);
++#endif
+ 
+ 	atomic_add(cc->cc_sqecount, &rdma->sc_sq_avail);
+ 	wake_up(&rdma->sc_send_wait);
+@@ -322,18 +341,24 @@ static int svc_rdma_post_chunk_ctxt(stru
+ 		if (atomic_sub_return(cc->cc_sqecount,
+ 				      &rdma->sc_sq_avail) > 0) {
+ 			ret = ib_post_send(rdma->sc_qp, first_wr, &bad_wr);
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 			trace_svcrdma_post_rw(&cc->cc_cqe,
+ 					      cc->cc_sqecount, ret);
++#endif
+ 			if (ret)
+ 				break;
+ 			return 0;
+ 		}
+ 
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 		trace_svcrdma_sq_full(rdma);
++#endif
+ 		atomic_add(cc->cc_sqecount, &rdma->sc_sq_avail);
+ 		wait_event(rdma->sc_send_wait,
+ 			   atomic_read(&rdma->sc_sq_avail) > cc->cc_sqecount);
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 		trace_svcrdma_sq_retry(rdma);
++#endif
+ 	} while (1);
+ 
+ 	set_bit(XPT_CLOSE, &xprt->xpt_flags);
+@@ -438,7 +463,9 @@ svc_rdma_build_writes(struct svc_rdma_wr
+ 		if (ret < 0)
+ 			goto out_initerr;
+ 
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 		trace_svcrdma_encode_wseg(seg_handle, write_len, seg_offset);
++#endif
+ 		list_add(&ctxt->rw_list, &cc->cc_rwctxts);
+ 		cc->cc_sqecount += ret;
+ 		if (write_len == seg_length - info->wi_seg_off) {
+@@ -464,7 +491,9 @@ out_noctx:
+ 
+ out_initerr:
+ 	svc_rdma_put_rw_ctxt(rdma, ctxt);
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_svcrdma_dma_map_rwctx(rdma, ret);
++#endif
+ 	return -EIO;
+ }
+ 
+@@ -529,7 +558,9 @@ int svc_rdma_send_write_chunk(struct svc
+ 	if (ret < 0)
+ 		goto out_err;
+ 
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_svcrdma_encode_write(xdr->page_len);
++#endif
+ 	return xdr->page_len;
+ 
+ out_err:
+@@ -587,7 +618,9 @@ int svc_rdma_send_reply_chunk(struct svc
+ 	if (ret < 0)
+ 		goto out_err;
+ 
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_svcrdma_encode_reply(consumed);
++#endif
+ 	return consumed;
+ 
+ out_err:
+@@ -659,7 +692,9 @@ out_overrun:
+ 	return -EINVAL;
+ 
+ out_initerr:
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_svcrdma_dma_map_rwctx(cc->cc_rdma, ret);
++#endif
+ 	svc_rdma_put_rw_ctxt(cc->cc_rdma, ctxt);
+ 	return -EIO;
+ }
+@@ -690,7 +725,9 @@ static int svc_rdma_build_read_chunk(str
+ 		if (ret < 0)
+ 			break;
+ 
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 		trace_svcrdma_encode_rseg(rs_handle, rs_length, rs_offset);
++#endif
+ 		info->ri_chunklen += rs_length;
+ 	}
+ 
+@@ -721,7 +758,9 @@ static int svc_rdma_build_normal_read_ch
+ 	if (ret < 0)
+ 		goto out;
+ 
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_svcrdma_encode_read(info->ri_chunklen, info->ri_position);
++#endif
+ 
+ 	head->rc_hdr_count = 0;
+ 
+@@ -777,7 +816,9 @@ static int svc_rdma_build_pz_read_chunk(
+ 	if (ret < 0)
+ 		goto out;
+ 
++#ifdef HAVE_TRACE_RPCRDMA_H
+ 	trace_svcrdma_encode_pzr(info->ri_chunklen);
++#endif
+ 
+ 	head->rc_arg.len += info->ri_chunklen;
+ 	head->rc_arg.buflen += info->ri_chunklen;

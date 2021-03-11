@@ -1,0 +1,28 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/core/uverbs_ioctl.c
+
+Change-Id: If5f6c2692b4a78f8fd7314b1fa382ae4b8c73a27
+---
+ drivers/infiniband/core/uverbs_ioctl.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+--- a/drivers/infiniband/core/uverbs_ioctl.c
++++ b/drivers/infiniband/core/uverbs_ioctl.c
+@@ -549,11 +549,16 @@ static int ib_uverbs_cmd_verbs(struct ib
+ 
+ 	if (unlikely(hdr->driver_id != uapi->driver_id))
+ 		return -EINVAL;
+-
++#ifdef HAVE_RADIX_TREE_ITER_LOOKUP
+ 	slot = radix_tree_iter_lookup(
+ 		&uapi->radix, &attrs_iter,
+ 		uapi_key_obj(hdr->object_id) |
+ 			uapi_key_ioctl_method(hdr->method_id));
++#else
++	radix_tree_iter_init(&attrs_iter,  uapi_key_obj(hdr->object_id) |
++					uapi_key_ioctl_method(hdr->method_id));
++	slot = radix_tree_next_chunk(&uapi->radix, &attrs_iter, RADIX_TREE_ITER_CONTIG);
++#endif
+ 	if (unlikely(!slot))
+ 		return -EPROTONOSUPPORT;
+ 	method_elm = rcu_dereference_protected(*slot, true);

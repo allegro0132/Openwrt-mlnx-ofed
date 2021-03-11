@@ -1,0 +1,30 @@
+From: Moshe Tal <moshet@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx5/core/debugfs.c
+
+Change-Id: If8db872676a82087f1ae795f561afcd332fc36ad
+---
+ drivers/net/ethernet/mellanox/mlx5/core/debugfs.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/debugfs.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/debugfs.c
+@@ -257,6 +257,11 @@ int mlx5_cmdif_debugfs_init(struct mlx5_
+ 				goto out;
+ 			}
+ 
++#ifndef HAVE_DEBUGFS_CREATE_U8_RET_STRUCT
++			debugfs_create_u64("n", 0400,
++					   stats->root,
++					   &stats->n);
++#else
+ 			stats->count = debugfs_create_u64("n", 0400,
+ 							  stats->root,
+ 							  &stats->n);
+@@ -265,6 +270,7 @@ int mlx5_cmdif_debugfs_init(struct mlx5_
+ 				err = -ENOMEM;
+ 				goto out;
+ 			}
++#endif
+ 		}
+ 	}
+ 

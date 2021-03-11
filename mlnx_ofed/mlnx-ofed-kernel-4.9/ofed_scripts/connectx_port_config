@@ -1,0 +1,408 @@
+#!/bin/bash
+
+#
+# Copyright (c) 2006 Mellanox Technologies. All rights reserved.
+#
+# This Software is licensed under one of the following licenses:
+#
+# 1) under the terms of the "Common Public License 1.0" a copy of which is
+#    available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/cpl.php.
+#
+# 2) under the terms of the "The BSD License" a copy of which is
+#    available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/bsd-license.php.
+#
+# 3) under the terms of the "GNU General Public License (GPL) Version 2" a
+#    copy of which is available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/gpl-license.php.
+#
+# Licensee has the right to choose one of the above licenses.
+#
+# Redistributions of source code must retain the above copyright
+# notice and one of the license notices.
+#
+# Redistributions in binary form must reproduce both the above copyright
+# notice, one of the license notices in the documentation
+# and/or other materials provided with the distribution.
+#
+#
+
+port_types=( "" "ib" "eth" "auto" )
+
+usage()
+{
+	echo "Usage:"
+	echo "/sbin/connectx_port_config"
+	echo "/sbin/connectx_port_config -s|--show"
+	echo "/sbin/connectx_port_config -h|--help"
+	echo "/sbin/connectx_port_config [-d|--device <PCI device id>] -c|--conf <port1,port2>"
+	echo -e "\nAll possible ports configuration combinations:"
+	echo "  ib,ib"
+	echo "  ib,eth"
+	echo "  ib,auto"
+	echo "  eth,ib"
+	echo "  eth,eth"
+	echo "  eth,auto"
+	echo "  auto,ib"
+	echo "  auto,eth"
+	echo -e "  auto,auto\n"
+	echo -e "Notice that some of the combinations above may not work because they are not\nsupported by the card or the Firmware."
+}
+
+is_integer()
+{
+	printf "%s\n" $1 |grep -E "^[+-]?[0-9]+$" > /dev/null
+	return $?
+}
+
+# If module $1 is loaded return - 0 else - 1
+is_module()
+{
+	local RC
+
+	/sbin/lsmod | grep -w "$1" > /dev/null 2>&1
+	RC=$?
+
+	return $RC
+}
+
+# Select PCI device interactively
+select_device()
+{
+	printf "Please select device to modify [$dev]: "
+	read dev;
+
+	if is_integer $dev; then
+		if [ $dev -lt 1 ]; then
+			echo "Illegal index selected, quitting..."; echo
+			exit 1;
+		fi
+
+		if [ -e ${Devices[$dev]}/mlx4_port1 ]; then
+			echo "`echo ${Devices[$dev]} | cut -d '/' -f 6`"; echo
+		else
+			echo "Illegal value selected, quitting..."; echo
+			exit 1
+		fi
+	else
+		echo "Numeric value expected, quitting..."; echo
+		exit 1
+	fi
+}
+
+set_device()
+{
+	ser=0;
+	for d in ${Devices[@]}; do
+		ser=$(($ser+1))
+		if [ "/sys/bus/pci/devices/${udevice}/" == "$d" ] || [ "/sys/bus/pci/devices/0000:${udevice}/" == "${d}" ] ; then
+			dev=$ser
+			return
+		fi
+	done
+}
+
+validate_device()
+{
+	if [ "$udevice" = "0" ]; then
+		if [ "$comm" != "" ]; then
+			if [ ${#Devices[@]} -gt 1 ]; then
+				echo "More then 1 ConnectX devices found, please specify required device"; echo
+				usage
+				exit 1
+			fi
+		fi
+		return
+	fi
+
+	for d in ${Devices[@]}; do
+		ser=$(($ser+1))
+		if [ "/sys/bus/pci/devices/${udevice}/" == "$d" ] || [ "/sys/bus/pci/devices/0000:${udevice}/" == "${d}" ] ; then
+			return
+		fi
+	done
+	echo "Error: illegal device selected."
+	exit 1;
+}
+
+validate_port_config()
+{
+	for conf in "eth,eth" "eth,ib" "eth,auto" "auto,auto" "auto,eth" "auto,ib" "ib,ib" "ib,auto" "ib,eth" "eth" "auto" "ib"; do
+		if [ "$conf" == "$comm" ]; then
+			return
+		fi
+	done
+	echo "Error: $comm is not valid port configuration"
+	usage
+	exit 1;
+}
+
+prompt_options()
+{
+	local port=$1
+	local options=$2
+	if [ "$port" == "2" ]; then
+		if [ -e ${Devices[$dev]}/mlx4_port2 ]; then
+			echo -n ""
+		else
+			return 0
+		fi
+	fi
+
+	printf "Select mode for port $port (${options}): "
+	read mode
+	if is_integer $mode; then
+		if [ $mode -lt 0 ]; then
+			echo "Illegal value selected, quitting..."; echo
+			exit 1
+		fi
+		if [ `echo ${options} | grep ${mode} -wc` == 0 ]; then
+			echo "Illegal value selected, quitting..."; echo
+			exit 1
+		fi
+		return "${mode}"
+	else
+		echo "Illegal value selected, quitting..."; echo
+		exit 1
+	fi
+}
+
+show_configuration()
+{
+	local cnt=0
+	for pci_dev in /sys/bus/pci/devices/*/; do
+		if [ -e $pci_dev/mlx4_port1 ]; then
+			echo "--------------------------------"
+			dev=`echo $pci_dev | cut -d '/' -f 6`
+			echo "Port configuration for PCI device: $dev is:"
+			cat ${pci_dev}/mlx4_port1
+			if [ -e $pci_dev/mlx4_port2 ]; then
+				cat ${pci_dev}/mlx4_port2
+			fi
+			echo "--------------------------------"
+			cnt=$(($cnt+1))
+		fi
+	done
+	if [ $cnt == 0 ]; then
+		echo "No ConnectX devices found or driver not loaded"
+	fi
+}
+
+save_config()
+{
+	local configuration_file=/etc/infiniband/connectx.conf
+	local config_comment="# ConnectX Port Configuration for $udevice"
+	local config_line=" -d $udevice -c $comm"
+
+	local add_new_lines=1
+	if [ -e "${configuration_file}" ]; then
+		# check if there is a configuration to the device
+		grep "${udevice}" ${configuration_file} >> /dev/null
+		if [ $? -eq 0 ]; then
+			# replace the configuration lines
+			sed -i "s/#.* ${udevice}/${config_comment}/" ${configuration_file}
+			sed -i "s/.*connectx_port_config.*$udevice.*/\/sbin\/connectx_port_config${config_line}/" ${configuration_file}
+
+			add_new_lines=0
+		fi
+	fi
+
+	# add the configuration lines to the end of the file
+	if [ ${add_new_lines} -ne 0 ]; then
+		echo "${config_comment}" >> ${configuration_file}
+		echo "/sbin/connectx_port_config${config_line}" >> ${configuration_file}
+	fi
+}
+
+set_port_config()
+{
+	echo "|----------------------------|"
+	echo "| Possible port modes:       |"
+	echo "| 1: Infiniband              |"
+	echo "| 2: Ethernet                |"
+	echo "| 3: AutoSense               |"
+	echo "|----------------------------|"
+
+	local options="1,2,3"
+
+	prompt_options 1 $options
+	comm=${port_types[$?]}
+	if [ -n "${comm}" ]; then
+		prompt_options 2 $options
+		local port2_conf=${port_types[$?]}
+
+		if [ -n "${port2_conf}" ]; then
+			comm="${comm},${port2_conf}"
+		fi
+	fi
+}
+
+
+udevice=0
+comm=""
+###############################################################################
+#                          Parsing command line                               #
+###############################################################################
+while [ ! -z "$1" ]; do
+	case "$1" in
+	-s|--show)
+		show_configuration
+		if [ -n "$2" ]; then
+			echo "Too many parameters"
+			usage
+			exit 1
+		fi
+		exit 0
+	;;
+	-d|--device)
+		if [ -z "$2" ]; then
+			echo "Error: Illegal input"
+			usage
+			exit 1
+		fi
+		udevice=$2
+		shift 2
+	;;
+	-c|--conf)
+		if [ -z "$2" ]; then
+			echo "Error: Illegal input"
+			usage
+			exit 1
+		fi
+		comm=$2
+		shift 2;
+		validate_port_config
+	;;
+	-h|--help)
+		usage
+		exit 0
+	;;
+	*)
+		echo "Wrong parameter error: $1"
+		usage
+		exit 1
+	;;
+	esac
+done
+
+#############################################################
+# Load low level driver if not loaded                       #
+#############################################################
+is_module mlx4_core
+RC=$?
+if [ $RC == 1 ]; then
+	echo "Bus driver not loaded, loading..."
+	/sbin/modprobe mlx4_core
+fi
+
+#############################################################
+# List ConnectX devices                                     #
+#############################################################
+i=0
+echo; echo "ConnectX PCI devices :"
+echo "|----------------------------|"
+for pci_dev in /sys/bus/pci/devices/*/; do
+	if [ -e $pci_dev/mlx4_port1 ]; then
+		(( i++ ))
+		Devices[$i]=$pci_dev
+		dev=`echo $pci_dev | cut -d '/' -f 6`
+		echo "| $i             $dev |"
+	fi
+done
+echo "|----------------------------|"; echo
+
+validate_device
+
+if [ $i == 0 ]; then
+	echo "No devices found, quiting..."
+	exit 1;
+fi
+
+#############################################################
+# Select device to modify                                   #
+#############################################################
+dev=1
+if [ $i -ne 1 ]; then
+	if [ "$comm" != "" ]; then
+		if [ "$udevice" != "0" ]; then
+			set_device
+		fi
+	else
+		select_device
+	fi
+fi
+
+udevice=`echo ${Devices[$dev]} | cut -d '/' -f 6`
+
+echo "Before port change:"
+cat ${Devices[$dev]}/mlx4_port1
+if [ -e ${Devices[$dev]}/mlx4_port2 ]; then
+	cat ${Devices[$dev]}/mlx4_port2
+fi
+echo
+
+write_mask="0x222"
+mlx4_port_file="${Devices[$dev]}/mlx4_port1"
+if [ ! -w $mlx4_port_file ] || [ $((0x$(stat -c "%a" $mlx4_port_file) & $write_mask)) == "0" ]; then
+	echo "Not allowed to change port configuration, quitting..."
+	exit 1;
+fi
+mlx4_port_file="${Devices[$dev]}/mlx4_port2"
+if [ -e $mlx4_port_file ] && ([ ! -w $mlx4_port_file ] || [ $((0x$(stat -c "%a" $mlx4_port_file) & $write_mask)) == "0" ]); then
+	echo "Not allowed to change port configuration, quitting..."
+	exit 1;
+fi
+
+############################################################
+# Set port configuration for the selected device           #
+############################################################
+if [ "$comm" == "" ]; then
+	set_port_config
+fi
+
+if [ -e ${Devices[$dev]}/port_trigger ]; then
+	echo "all" > ${Devices[$dev]}/port_trigger
+fi
+
+comm1=`echo ${comm} | cut -d ',' -f 1`
+comm2=`echo ${comm} | cut -d ',' -f 2`
+
+for uverbs_dir in ${Devices[$dev]}infiniband_verbs/uverbs*
+do
+	if [[ -f $uverbs_dir/ref_cnt  ]]; then
+		if [[ `cat "$uverbs_dir/ref_cnt"` > 1 ]]; then
+			echo "WARNING: Please close user level applications" \
+			     "before running connectx_port_config. "
+			echo "Operation aborted!"
+			exit 1
+		fi
+	fi
+done
+
+{
+echo "${comm1}" > ${Devices[$dev]}/mlx4_port1
+} > /dev/null 2>&1
+rc=$?
+	if [ -e ${Devices[$dev]}/mlx4_port2 ]; then
+	{
+		echo "${comm2}" > ${Devices[$dev]}/mlx4_port2
+	} > /dev/null 2>&1
+	rc=$?
+fi
+if [ $rc -ne 0 ]; then
+	echo "WARNING: Illegal port configuration attempted,"
+	echo "	Please view dmesg for details."; echo
+	exit 1
+fi
+
+echo; echo "After port change:"
+cat ${Devices[$dev]}/mlx4_port1
+if [ -e ${Devices[$dev]}/mlx4_port2 ]; then
+	cat ${Devices[$dev]}/mlx4_port2
+fi
+
+save_config
+
+exit 0
+

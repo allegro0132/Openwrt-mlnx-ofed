@@ -1,0 +1,22 @@
+From: Vasily Philipov <vasilyf@mellanox.com>
+Subject: [PATCH] BACKPORT: net/sunrpc/xprtrdma/module.c
+
+Change-Id: Iadc4400580339ab42670d313bc3269824507e465
+Signed-off-by: Vasily Philipov <vasilyf@mellanox.com>
+---
+ net/sunrpc/xprtrdma/module.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+--- a/net/sunrpc/xprtrdma/module.c
++++ b/net/sunrpc/xprtrdma/module.c
+@@ -17,7 +17,10 @@
+ #include "xprt_rdma.h"
+ 
+ #define CREATE_TRACE_POINTS
++
++#ifdef HAVE_TRACE_RPCRDMA_H
+ #include <trace/events/rpcrdma.h>
++#endif
+ 
+ MODULE_AUTHOR("Open Grid Computing and Network Appliance, Inc.");
+ MODULE_DESCRIPTION("RPC/RDMA Transport");

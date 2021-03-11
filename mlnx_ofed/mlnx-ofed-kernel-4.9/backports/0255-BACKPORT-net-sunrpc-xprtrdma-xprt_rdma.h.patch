@@ -1,0 +1,128 @@
+From: Vasily Philipov <vasilyf@mellanox.com>
+Subject: [PATCH] BACKPORT: net/sunrpc/xprtrdma/xprt_rdma.h
+
+Change-Id: I5acbac0ef819b32787641c791ca12c9fa58afe25
+Signed-off-by: Vasily Philipov <vasilyf@mellanox.com>
+---
+ net/sunrpc/xprtrdma/xprt_rdma.h | 70 +++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 70 insertions(+)
+
+--- a/net/sunrpc/xprtrdma/xprt_rdma.h
++++ b/net/sunrpc/xprtrdma/xprt_rdma.h
+@@ -325,7 +325,9 @@ enum {
+ struct rpcrdma_buffer;
+ struct rpcrdma_req {
+ 	struct list_head	rl_list;
++#ifdef HAVE_RPC_XPRT_OPS_FREE_SLOT
+ 	struct rpc_rqst		rl_slot;
++#endif
+ 	struct rpcrdma_buffer	*rl_buffer;
+ 	struct rpcrdma_rep	*rl_reply;
+ 	struct xdr_stream	rl_stream;
+@@ -335,6 +337,10 @@ struct rpcrdma_req {
+ 	struct rpcrdma_regbuf	*rl_sendbuf;	/* rq_snd_buf */
+ 	struct rpcrdma_regbuf	*rl_recvbuf;	/* rq_rcv_buf */
+ 
++#ifndef HAVE_XPRT_PIN_RQST
++	__be32			    rl_xid;
++#endif
++
+ 	struct list_head	rl_all;
+ 	unsigned long		rl_flags;
+ 
+@@ -348,10 +354,23 @@ enum {
+ 	RPCRDMA_REQ_F_TX_RESOURCES,
+ };
+ 
++#ifndef HAVE_RPC_XPRT_OPS_FREE_SLOT
++static inline void
++rpcrdma_set_xprtdata(struct rpc_rqst *rqst, struct rpcrdma_req *req)
++{
++	rqst->rq_xprtdata = req;
++}
++#endif
++
+ static inline struct rpcrdma_req *
+ rpcr_to_rdmar(const struct rpc_rqst *rqst)
+ {
++#ifdef HAVE_RPC_XPRT_OPS_FREE_SLOT
+ 	return container_of(rqst, struct rpcrdma_req, rl_slot);
++#else
++	return rqst->rq_xprtdata;
++#endif
++
+ }
+ 
+ static inline void
+@@ -370,6 +389,21 @@ rpcrdma_mr_pop(struct list_head *list)
+ 	return mr;
+ }
+ 
++#ifndef HAVE_XDR_STREAM_REMAINING
++/**
++ * xdr_stream_remaining - Return the number of bytes remaining in the stream
++ * @xdr: pointer to struct xdr_stream
++ *
++ * Return value:
++ *   Number of bytes remaining in @xdr before xdr->end
++ */
++static inline size_t
++xdr_stream_remaining(const struct xdr_stream *xdr)
++{
++	return xdr->nwords << 2;
++}
++#endif
++
+ /*
+  * struct rpcrdma_buffer -- holds list/queue of pre-registered memory for
+  * inline requests/replies, and client/server credits.
+@@ -386,6 +420,10 @@ struct rpcrdma_buffer {
+ 	unsigned long		rb_sc_last;
+ 	struct rpcrdma_sendctx	**rb_sc_ctxs;
+ 
++#ifndef HAVE_XPRT_PIN_RQST
++	struct list_head	rb_pending;
++#endif
++
+ 	spinlock_t		rb_lock;	/* protect buf lists */
+ 	struct list_head	rb_send_bufs;
+ 	struct list_head	rb_recv_bufs;
+@@ -402,6 +440,38 @@ struct rpcrdma_buffer {
+ 	struct delayed_work	rb_refresh_worker;
+ };
+ 
++#ifndef HAVE_XPRT_PIN_RQST
++static inline void
++rpcrdma_insert_req(struct rpcrdma_buffer *buffers, struct rpcrdma_req *req)
++{
++	spin_lock(&buffers->rb_lock);
++	if (list_empty(&req->rl_list))
++		list_add_tail(&req->rl_list, &buffers->rb_pending);
++	spin_unlock(&buffers->rb_lock);
++}
++
++static inline struct rpcrdma_req *
++rpcrdma_lookup_req_locked(struct rpcrdma_buffer *buffers, __be32 xid)
++{
++	struct rpcrdma_req *pos;
++
++	list_for_each_entry(pos, &buffers->rb_pending, rl_list)
++	if (pos->rl_xid == xid)
++		return pos;
++	return NULL;
++}
++
++static inline void
++rpcrdma_remove_req(struct rpcrdma_buffer *buffers, struct rpcrdma_req *req)
++{
++	spin_lock(&buffers->rb_lock);
++	list_del(&req->rl_list);
++	spin_unlock(&buffers->rb_lock);
++}
++
++void rpcrdma_recv_buffer_put_locked(struct rpcrdma_rep *rep);
++#endif
++
+ /* rb_flags */
+ enum {
+ 	RPCRDMA_BUF_F_EMPTY_SCQ = 0,

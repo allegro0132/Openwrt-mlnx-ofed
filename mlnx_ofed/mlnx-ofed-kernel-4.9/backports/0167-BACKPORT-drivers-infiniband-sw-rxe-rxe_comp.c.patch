@@ -1,0 +1,28 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/sw/rxe/rxe_comp.c
+
+Change-Id: I440d05bd1ab8902ce691da7a34254191a8c12364
+---
+ drivers/infiniband/sw/rxe/rxe_comp.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+--- a/drivers/infiniband/sw/rxe/rxe_comp.c
++++ b/drivers/infiniband/sw/rxe/rxe_comp.c
+@@ -136,9 +136,17 @@ static enum ib_wc_opcode wr_to_wc_opcode
+ 	}
+ }
+ 
++#ifdef HAVE_TIMER_SETUP
+ void retransmit_timer(struct timer_list *t)
++#else
++void retransmit_timer(unsigned long data)
++#endif
+ {
++#ifdef HAVE_TIMER_SETUP
+ 	struct rxe_qp *qp = from_timer(qp, t, retrans_timer);
++#else
++	struct rxe_qp *qp = (struct rxe_qp *)data;
++#endif
+ 
+ 	if (qp->valid) {
+ 		qp->comp.timeout = 1;

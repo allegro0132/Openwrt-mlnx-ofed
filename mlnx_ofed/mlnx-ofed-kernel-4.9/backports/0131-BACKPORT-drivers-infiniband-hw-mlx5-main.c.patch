@@ -1,0 +1,239 @@
+From: Yevgeny Kliteynik <kliteyn@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/hw/mlx5/main.c
+
+---
+ drivers/infiniband/hw/mlx5/main.c | 67 +++++++++++++++++++++++++++----
+ 1 file changed, 59 insertions(+), 8 deletions(-)
+
+--- a/drivers/infiniband/hw/mlx5/main.c
++++ b/drivers/infiniband/hw/mlx5/main.c
+@@ -53,7 +53,9 @@
+ #include <linux/mlx5/port.h>
+ #include <linux/mlx5/vport.h>
+ #include <linux/mlx5/capi.h>
++#ifdef HAVE_MM_CONTEXT_ADD_COPRO
+ #include <linux/mmu_context.h>
++#endif
+ #include <linux/mlx5/fs.h>
+ #include <linux/list.h>
+ #include <rdma/ib_smi.h>
+@@ -83,6 +85,9 @@
+ MODULE_AUTHOR("Eli Cohen <eli@mellanox.com>");
+ MODULE_DESCRIPTION("Mellanox Connect-IB HCA IB driver");
+ MODULE_LICENSE("Dual BSD/GPL");
++#ifdef RETPOLINE_MLNX
++MODULE_INFO(retpoline, "Y");
++#endif
+ 
+ static char mlx5_version[] =
+ 	DRIVER_NAME ": Mellanox Connect-IB Infiniband driver v"
+@@ -224,13 +229,17 @@ static int mlx5_netdev_event(struct noti
+ 	case NETDEV_CHANGE:
+ 	case NETDEV_UP:
+ 	case NETDEV_DOWN: {
++#ifdef HAVE_NETDEV_MASTER_UPPER_DEV_GET
+ 		struct net_device *lag_ndev = mlx5_lag_get_roce_netdev(mdev);
++#endif
+ 		struct net_device *upper = NULL;
+ 
++#ifdef HAVE_NETDEV_MASTER_UPPER_DEV_GET
+ 		if (lag_ndev) {
+ 			upper = netdev_master_upper_dev_get(lag_ndev);
+ 			dev_put(lag_ndev);
+ 		}
++#endif
+ 
+ 		if (ibdev->is_rep)
+ 			roce = mlx5_get_rep_roce(ibdev, ndev, &port_num);
+@@ -1007,8 +1016,10 @@ int mlx5_ib_query_device(struct ib_devic
+ 	if (MLX5_CAP_GEN(mdev, cd))
+ 		props->device_cap_flags |= IB_DEVICE_CROSS_CHANNEL;
+ 
++#ifdef HAVE_NDO_SET_VF_MAC
+ 	if (!mlx5_core_is_pf(mdev))
+ 		props->device_cap_flags |= IB_DEVICE_VIRTUAL_FUNCTION;
++#endif
+ 
+ 	if (mlx5_ib_port_link_layer(ibdev, 1) ==
+ 	    IB_LINK_LAYER_ETHERNET && raw_support) {
+@@ -1829,7 +1840,9 @@ static int alloc_capi_context(struct mlx
+ 		goto out_mm;
+ 	}
+ 
++#ifdef HAVE_MM_CONTEXT_ADD_COPRO
+ 	mm_context_add_copro(cctx->mm);
++#endif
+ 	return 0;
+ 
+ out_mm:
+@@ -1847,7 +1860,9 @@ static int free_capi_context(struct mlx5
+ 	err = mlx5_core_destroy_pec(dev->mdev, cctx->pasid);
+ 	if (err)
+ 		mlx5_ib_warn(dev, "destroy pec failed\n");
++#ifdef HAVE_MM_CONTEXT_ADD_COPRO
+ 	mm_context_remove_copro(cctx->mm);
++#endif
+ 	mmdrop(cctx->mm);
+ 	return err;
+ }
+@@ -2150,9 +2165,11 @@ static int get_extended_index(unsigned l
+ }
+ 
+ 
++#if defined(HAVE_PUT_TASK_STRUCT_EXPORTED) && defined (HAVE_GET_TASK_PID_EXPORTED) && defined(HAVE_GET_PID_TASK_EXPORTED)
+ static void mlx5_ib_disassociate_ucontext(struct ib_ucontext *ibcontext)
+ {
+ }
++#endif
+ 
+ static inline char *mmap_cmd2str(enum mlx5_ib_mmap_cmd cmd)
+ {
+@@ -2234,6 +2251,9 @@ static int uar_mmap(struct mlx5_ib_dev *
+ 	int dyn_uar = (cmd == MLX5_IB_MMAP_ALLOC_WC);
+ 	int max_valid_idx = dyn_uar ? bfregi->num_sys_pages :
+ 				bfregi->num_static_sys_pages;
++#if defined(CONFIG_X86) && !defined(HAVE_PAT_ENABLED_AS_FUNCTION)
++	pgprot_t tmp_prot = __pgprot(0);
++#endif
+ 
+ 	if (vma->vm_end - vma->vm_start != PAGE_SIZE)
+ 		return -EINVAL;
+@@ -2254,7 +2274,11 @@ static int uar_mmap(struct mlx5_ib_dev *
+ 	case MLX5_IB_MMAP_ALLOC_WC:
+ /* Some architectures don't support WC memory */
+ #if defined(CONFIG_X86)
++#ifdef HAVE_PAT_ENABLED_AS_FUNCTION
+ 		if (!pat_enabled())
++#else
++		if (pgprot_val(pgprot_writecombine(tmp_prot)) == pgprot_val(pgprot_noncached(tmp_prot)))
++#endif
+ 			return -EPERM;
+ #elif !(defined(CONFIG_PPC) || ((defined(CONFIG_ARM) || defined(CONFIG_ARM64)) && defined(CONFIG_MMU)))
+ 			return -EPERM;
+@@ -3455,7 +3479,9 @@ static struct mlx5_ib_flow_prio *get_flo
+ 						struct ib_flow_attr *flow_attr,
+ 						enum flow_table_type ft_type)
+ {
++#ifdef CONFIG_MLX5_ESWITCH 
+ 	struct mlx5_eswitch *esw = dev->mdev->priv.eswitch;
++#endif
+ 	bool dont_trap = flow_attr->flags & IB_FLOW_ATTR_FLAGS_DONT_TRAP;
+ 	struct mlx5_flow_namespace *ns = NULL;
+ 	struct mlx5_ib_flow_prio *prio;
+@@ -3469,11 +3495,12 @@ static struct mlx5_ib_flow_prio *get_flo
+ 
+ 	max_table_size = BIT(MLX5_CAP_FLOWTABLE_NIC_RX(dev->mdev,
+ 						       log_max_ft_size));
++#ifdef CONFIG_MLX5_ESWITCH 
+ 	if (MLX5_ESWITCH_MANAGER(dev->mdev) &&
+ 	    mlx5_eswitch_mode(dev->mdev->priv.eswitch) == MLX5_ESWITCH_OFFLOADS)
+ 		esw_encap = mlx5_eswitch_get_encap_mode(esw) !=
+ 			DEVLINK_ESWITCH_ENCAP_MODE_NONE;
+-
++#endif
+ 	if (flow_attr->type == IB_FLOW_ATTR_NORMAL) {
+ 		enum mlx5_flow_namespace_type fn_type;
+ 
+@@ -4139,7 +4166,9 @@ _get_flow_table(struct mlx5_ib_dev *dev,
+ 		struct mlx5_ib_flow_matcher *fs_matcher,
+ 		bool mcast)
+ {
++#ifdef CONFIG_MLX5_ESWITCH 
+ 	struct mlx5_eswitch *esw = dev->mdev->priv.eswitch;
++#endif
+ 	struct mlx5_flow_namespace *ns = NULL;
+ 	struct mlx5_ib_flow_prio *prio = NULL;
+ 	int max_table_size = 0;
+@@ -4147,11 +4176,12 @@ _get_flow_table(struct mlx5_ib_dev *dev,
+ 	u32 flags = 0;
+ 	int priority;
+ 
++#ifdef CONFIG_MLX5_ESWITCH 
+ 	if (MLX5_ESWITCH_MANAGER(dev->mdev) &&
+ 	    mlx5_eswitch_mode(dev->mdev->priv.eswitch) == MLX5_ESWITCH_OFFLOADS)
+ 		esw_encap = mlx5_eswitch_get_encap_mode(esw) !=
+ 			DEVLINK_ESWITCH_ENCAP_MODE_NONE;
+-
++#endif
+ 	if (mcast)
+ 		priority = MLX5_IB_FLOW_MCAST_PRIO;
+ 	else
+@@ -6011,6 +6041,15 @@ static int delay_drop_debugfs_init(struc
+ 	if (!dbg->dir_debugfs)
+ 		goto out_debugfs;
+ 
++#ifndef HAVE_DEBUGFS_CREATE_U8_RET_STRUCT
++	debugfs_create_atomic_t("num_timeout_events", 0400,
++			        dbg->dir_debugfs,
++				&dev->delay_drop.events_cnt);
++
++	debugfs_create_atomic_t("num_rqs", 0400,
++				dbg->dir_debugfs,
++				&dev->delay_drop.rqs_cnt);
++#else
+ 	dbg->events_cnt_debugfs =
+ 		debugfs_create_atomic_t("num_timeout_events", 0400,
+ 					dbg->dir_debugfs,
+@@ -6024,6 +6063,7 @@ static int delay_drop_debugfs_init(struc
+ 					&dev->delay_drop.rqs_cnt);
+ 	if (!dbg->rqs_cnt_debugfs)
+ 		goto out_debugfs;
++#endif
+ 
+ 	dbg->timeout_debugfs =
+ 		debugfs_create_file("timeout", 0600,
+@@ -6512,11 +6552,11 @@ static struct ib_counters *mlx5_ib_creat
+ static void mlx5_ib_stage_init_cleanup(struct mlx5_ib_dev *dev)
+ {
+ 	mlx5_ib_cleanup_multiport_master(dev);
+-	if (IS_ENABLED(CONFIG_INFINIBAND_ON_DEMAND_PAGING)) {
++#ifdef CONFIG_INFINIBAND_ON_DEMAND_PAGING
+ 		srcu_barrier(&dev->mr_srcu);
+ 		debugfs_remove_recursive(dev->odp_stats.odp_debugfs);
+ 		cleanup_srcu_struct(&dev->mr_srcu);
+-	}
++#endif
+ 
+ 	WARN_ON(!bitmap_empty(dev->dm.memic_alloc_pages, MLX5_MAX_MEMIC_PAGES));
+ }
+@@ -6632,7 +6672,9 @@ static const struct ib_device_ops mlx5_i
+ 	.destroy_qp = mlx5_ib_destroy_qp,
+ 	.destroy_srq = mlx5_ib_destroy_srq,
+ 	.detach_mcast = mlx5_ib_mcg_detach,
++#if defined(HAVE_PUT_TASK_STRUCT_EXPORTED) && defined (HAVE_GET_TASK_PID_EXPORTED) && defined(HAVE_GET_PID_TASK_EXPORTED)
+ 	.disassociate_ucontext = mlx5_ib_disassociate_ucontext,
++#endif
+ 	.drain_rq = mlx5_ib_drain_rq,
+ 	.drain_sq = mlx5_ib_drain_sq,
+ 	.fill_res_entry = mlx5_ib_fill_res_entry,
+@@ -6681,6 +6723,9 @@ static const struct ib_device_ops mlx5_i
+ #ifdef CONFIG_INFINIBAND_ON_DEMAND_PAGING
+ 	.exp_prefetch_mr	= mlx5_ib_prefetch_mr,
+ #endif
++#ifdef HAVE_MM_STRUCT_FREE_AREA_CACHE
++	.exp_get_unmapped_area = mlx5_ib_exp_get_unmapped_area,
++#endif
+ 
+ 
+ 	INIT_RDMA_OBJ_SIZE(ib_ah, mlx5_ib_ah, ibah),
+@@ -6710,10 +6755,16 @@ static const struct ib_device_ops mlx5_i
+ };
+ 
+ static const struct ib_device_ops mlx5_ib_dev_sriov_ops = {
+-	.get_vf_config = mlx5_ib_get_vf_config,
+-	.get_vf_stats = mlx5_ib_get_vf_stats,
+-	.set_vf_guid = mlx5_ib_set_vf_guid,
+-	.set_vf_link_state = mlx5_ib_set_vf_link_state,
++#ifdef HAVE_NDO_SET_VF_MAC
++       .get_vf_config = mlx5_ib_get_vf_config,
++#ifdef HAVE_LINKSTATE
++       .set_vf_link_state = mlx5_ib_set_vf_link_state,
++#endif
++       .get_vf_stats = mlx5_ib_get_vf_stats,
++#ifdef HAVE_IFLA_VF_IB_NODE_PORT_GUID
++       .set_vf_guid = mlx5_ib_set_vf_guid,
++#endif
++#endif
+ };
+ 
+ static const struct ib_device_ops mlx5_ib_dev_mw_ops = {

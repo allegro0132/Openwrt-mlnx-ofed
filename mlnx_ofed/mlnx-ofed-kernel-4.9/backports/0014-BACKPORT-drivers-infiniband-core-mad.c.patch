@@ -1,0 +1,429 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/core/mad.c
+
+Change-Id: Ic63ed85e4f7e2a88d6b9dd8754f845bd5bec188a
+---
+ drivers/infiniband/core/mad.c | 121 +++++++++++++++++++++++++++++++++++-------
+ 1 file changed, 102 insertions(+), 19 deletions(-)
+
+--- a/drivers/infiniband/core/mad.c
++++ b/drivers/infiniband/core/mad.c
+@@ -55,13 +55,18 @@
+ #include "opa_smi.h"
+ #include "agent.h"
+ 
++#ifndef MLX_DISABLE_TRACEPOINTS
+ #define CREATE_TRACE_POINTS
+ #include <trace/events/ib_mad.h>
+ 
+ #ifdef CONFIG_TRACEPOINTS
+ static void create_mad_addr_info(struct ib_mad_send_wr_private *mad_send_wr,
+ 			  struct ib_mad_qp_info *qp_info,
++#ifdef HAVE_TRACE_EVENTS_H
+ 			  struct trace_event_raw_ib_mad_send_template *entry)
++#else
++			  struct ftrace_raw_ib_mad_send_template *entry)
++#endif
+ {
+ 	u16 pkey;
+ 	struct ib_device *dev = qp_info->port_priv->device;
+@@ -80,6 +85,7 @@ static void create_mad_addr_info(struct
+ 	entry->dlid = rdma_ah_get_dlid(&attr);
+ }
+ #endif
++#endif
+ 
+ static int mad_sendq_size = IB_MAD_QP_SEND_SIZE;
+ static int mad_recvq_size = IB_MAD_QP_RECV_SIZE;
+@@ -88,10 +94,10 @@ module_param_named(send_queue_size, mad_
+ MODULE_PARM_DESC(send_queue_size, "Size of send queue in number of work requests");
+ module_param_named(recv_queue_size, mad_recvq_size, int, 0444);
+ MODULE_PARM_DESC(recv_queue_size, "Size of receive queue in number of work requests");
+-
+ /* Client ID 0 is used for snoop-only clients */
+ static DEFINE_XARRAY_ALLOC1(ib_mad_clients);
+ static u32 ib_mad_client_next;
++
+ static struct list_head ib_mad_port_list;
+ 
+ /*
+@@ -150,11 +156,19 @@ static int send_sa_cc_mad(struct ib_mad_
+  * Timeout FIFO functions - implements FIFO with timeout mechanism
+  */
+ 
++#ifdef HAVE_TIMER_SETUP
+ static void activate_timeout_handler_task(struct timer_list *t)
++#else
++static void activate_timeout_handler_task(unsigned long data)
++#endif
+ {
+ 	struct to_fifo *tf;
+ 
++#ifdef HAVE_TIMER_SETUP
+ 	tf = from_timer(tf, t, timer);
++#else
++	tf = (struct to_fifo *)data;
++#endif
+ 	del_timer(&tf->timer);
+ 	queue_work(tf->workq, &tf->work);
+ }
+@@ -262,8 +276,16 @@ static struct to_fifo *tf_create(void)
+ 		spin_lock_init(&tf->lists_lock);
+ 		INIT_LIST_HEAD(&tf->to_head);
+ 		INIT_LIST_HEAD(&tf->fifo_head);
++#ifdef HAVE_TIMER_SETUP
+ 		timer_setup(&tf->timer, activate_timeout_handler_task, 0);
++#else
++		init_timer(&tf->timer);
++#endif
+ 		INIT_WORK(&tf->work, timeout_handler_task);
++#ifndef HAVE_TIMER_SETUP
++		tf->timer.data = (unsigned long)tf;
++		tf->timer.function = activate_timeout_handler_task;
++#endif
+ 		tf->timer.expires = jiffies;
+ 		tf->stop_enqueue = 0;
+ 		tf->num_items = 0;
+@@ -811,30 +833,46 @@ struct ib_mad_agent *ib_register_mad_age
+ 	/* Validate parameters */
+ 	qpn = get_spl_qp_index(qp_type);
+ 	if (qpn == -1) {
++#ifdef RATELIMIT_STATE_INIT 		
+ 		dev_dbg_ratelimited(&device->dev, "%s: invalid QP Type %d\n",
+ 				    __func__, qp_type);
++#else
++		dev_notice(&device->dev,"%s: invalid QP Type %d\n",__func__, qp_type);
++#endif
+ 		goto error1;
+ 	}
+ 
+ 	if (rmpp_version && rmpp_version != IB_MGMT_RMPP_VERSION) {
++#ifdef RATELIMIT_STATE_INIT 		
+ 		dev_dbg_ratelimited(&device->dev,
+ 				    "%s: invalid RMPP Version %u\n",
+ 				    __func__, rmpp_version);
++#else
++		dev_notice(&device->dev,"%s: invalid RMPP Version%u\n",__func__, rmpp_version);
++#endif
+ 		goto error1;
+ 	}
+ 
+ 	/* Validate MAD registration request if supplied */
+ 	if (mad_reg_req) {
+ 		if (mad_reg_req->mgmt_class_version >= MAX_MGMT_VERSION) {
++#ifdef RATELIMIT_STATE_INIT 		
+ 			dev_dbg_ratelimited(&device->dev,
+ 					    "%s: invalid Class Version %u\n",
+ 					    __func__,
+ 					    mad_reg_req->mgmt_class_version);
++#else
++		dev_notice(&device->dev,"%s: invalid Class Version %u\n",__func__, mad_reg_req->mgmt_class_version);
++#endif
+ 			goto error1;
+ 		}
+ 		if (!recv_handler) {
++#ifdef RATELIMIT_STATE_INIT 		
+ 			dev_dbg_ratelimited(&device->dev,
+ 					    "%s: no recv_handler\n", __func__);
++#else
++		dev_notice(&device->dev,"%s:  no recv_handler\n",__func__);
++#endif
+ 			goto error1;
+ 		}
+ 		if (mad_reg_req->mgmt_class >= MAX_MGMT_CLASS) {
+@@ -844,9 +882,13 @@ struct ib_mad_agent *ib_register_mad_age
+ 			 */
+ 			if (mad_reg_req->mgmt_class !=
+ 			    IB_MGMT_CLASS_SUBN_DIRECTED_ROUTE) {
++#ifdef RATELIMIT_STATE_INIT 		
+ 				dev_dbg_ratelimited(&device->dev,
+ 					"%s: Invalid Mgmt Class 0x%x\n",
+ 					__func__, mad_reg_req->mgmt_class);
++#else
++		dev_notice(&device->dev,"%s: Invalid Mgmt Class 0x%x\n",__func__, mad_reg_req->mgmt_class);
++#endif
+ 				goto error1;
+ 			}
+ 		} else if (mad_reg_req->mgmt_class == 0) {
+@@ -854,9 +896,13 @@ struct ib_mad_agent *ib_register_mad_age
+ 			 * Class 0 is reserved in IBA and is used for
+ 			 * aliasing of IB_MGMT_CLASS_SUBN_DIRECTED_ROUTE
+ 			 */
++#ifdef RATELIMIT_STATE_INIT 		
+ 			dev_dbg_ratelimited(&device->dev,
+ 					    "%s: Invalid Mgmt Class 0\n",
+ 					    __func__);
++#else
++		dev_notice(&device->dev,"%s: Invalid Mgmt Class 0\n",__func__);
++#endif
+ 			goto error1;
+ 		} else if (is_vendor_class(mad_reg_req->mgmt_class)) {
+ 			/*
+@@ -864,19 +910,27 @@ struct ib_mad_agent *ib_register_mad_age
+ 			 * ensure supplied OUI is not zero
+ 			 */
+ 			if (!is_vendor_oui(mad_reg_req->oui)) {
++#ifdef RATELIMIT_STATE_INIT 		
+ 				dev_dbg_ratelimited(&device->dev,
+ 					"%s: No OUI specified for class 0x%x\n",
+ 					__func__,
+ 					mad_reg_req->mgmt_class);
++#else
++		dev_notice(&device->dev,"%s: No OUI specified for class 0x%x\n",__func__, mad_reg_req->mgmt_class);
++#endif
+ 				goto error1;
+ 			}
+ 		}
+ 		/* Make sure class supplied is consistent with RMPP */
+ 		if (!ib_is_mad_class_rmpp(mad_reg_req->mgmt_class)) {
+ 			if (rmpp_version) {
++#ifdef RATELIMIT_STATE_INIT 		
+ 				dev_dbg_ratelimited(&device->dev,
+ 					"%s: RMPP version for non-RMPP class 0x%x\n",
+ 					__func__, mad_reg_req->mgmt_class);
++#else
++		dev_notice(&device->dev,"%s: RMPP version for non-RMPP class 0x%x\n",__func__, mad_reg_req->mgmt_class);
++#endif
+ 				goto error1;
+ 			}
+ 		}
+@@ -887,9 +941,13 @@ struct ib_mad_agent *ib_register_mad_age
+ 					IB_MGMT_CLASS_SUBN_LID_ROUTED) &&
+ 			    (mad_reg_req->mgmt_class !=
+ 					IB_MGMT_CLASS_SUBN_DIRECTED_ROUTE)) {
++#ifdef RATELIMIT_STATE_INIT 		
+ 				dev_dbg_ratelimited(&device->dev,
+ 					"%s: Invalid SM QP type: class 0x%x\n",
+ 					__func__, mad_reg_req->mgmt_class);
++#else
++		dev_notice(&device->dev,"%s: Invalid SM QP type: class 0x%x\n",__func__, mad_reg_req->mgmt_class);
++#endif
+ 				goto error1;
+ 			}
+ 		} else {
+@@ -897,9 +955,13 @@ struct ib_mad_agent *ib_register_mad_age
+ 					IB_MGMT_CLASS_SUBN_LID_ROUTED) ||
+ 			    (mad_reg_req->mgmt_class ==
+ 					IB_MGMT_CLASS_SUBN_DIRECTED_ROUTE)) {
++#ifdef RATELIMIT_STATE_INIT 		
+ 				dev_dbg_ratelimited(&device->dev,
+ 					"%s: Invalid GS QP type: class 0x%x\n",
+ 					__func__, mad_reg_req->mgmt_class);
++#else
++		dev_notice(&device->dev,"%s: Invalid GS QP type: class 0x%x\n",__func__, mad_reg_req->mgmt_class);
++#endif
+ 				goto error1;
+ 			}
+ 		}
+@@ -914,8 +976,12 @@ struct ib_mad_agent *ib_register_mad_age
+ 	/* Validate device and port */
+ 	port_priv = ib_get_mad_port(device, port_num);
+ 	if (!port_priv) {
++#ifdef RATELIMIT_STATE_INIT 		
+ 		dev_dbg_ratelimited(&device->dev, "%s: Invalid port %d\n",
+ 				    __func__, port_num);
++#else
++		dev_notice(&device->dev,"%s: Invalid port %d\n",__func__, port_num);
++#endif
+ 		ret = ERR_PTR(-ENODEV);
+ 		goto error1;
+ 	}
+@@ -924,8 +990,12 @@ struct ib_mad_agent *ib_register_mad_age
+ 	 * will not have QP0.
+ 	 */
+ 	if (!port_priv->qp_info[qpn].qp) {
++#ifdef RATELIMIT_STATE_INIT 		
+ 		dev_dbg_ratelimited(&device->dev, "%s: QP %d not supported\n",
+ 				    __func__, qpn);
++#else
++		dev_notice(&device->dev,"%s: QP %d not supported\n",__func__, qpn);
++#endif
+ 		ret = ERR_PTR(-EPROTONOSUPPORT);
+ 		goto error1;
+ 	}
+@@ -972,7 +1042,6 @@ struct ib_mad_agent *ib_register_mad_age
+ 		ret = ERR_PTR(ret2);
+ 		goto error4;
+ 	}
+-
+ 	/*
+ 	 * The mlx4 driver uses the top byte to distinguish which virtual
+ 	 * function generated the MAD, so we must avoid using it.
+@@ -989,6 +1058,7 @@ struct ib_mad_agent *ib_register_mad_age
+ 	 * Make sure MAD registration (if supplied)
+ 	 * is non overlapping with any existing ones
+ 	 */
++
+ 	spin_lock_irq(&port_priv->reg_lock);
+ 	if (mad_reg_req) {
+ 		mgmt_class = convert_mgmt_class(mad_reg_req->mgmt_class);
+@@ -1016,19 +1086,20 @@ struct ib_mad_agent *ib_register_mad_age
+ 					if (is_vendor_method_in_use(
+ 							vendor_class,
+ 							mad_reg_req))
+-						goto error6;
++       					goto error6;
+ 				}
+ 			}
+ 			ret2 = add_oui_reg_req(mad_reg_req, mad_agent_priv);
+ 		}
+ 		if (ret2) {
+ 			ret = ERR_PTR(ret2);
+-			goto error6;
++				goto error6;
+ 		}
+ 	}
+ 	spin_unlock_irq(&port_priv->reg_lock);
+-
++#ifndef MLX_DISABLE_TRACEPOINTS
+ 	trace_ib_mad_create_agent(mad_agent_priv);
++#endif
+ 	return &mad_agent_priv->agent;
+ error6:
+ 	spin_unlock_irq(&port_priv->reg_lock);
+@@ -1182,10 +1253,10 @@ static inline void deref_snoop_agent(str
+ static void unregister_mad_agent(struct ib_mad_agent_private *mad_agent_priv)
+ {
+ 	struct ib_mad_port_private *port_priv;
+-
++#ifndef MLX_DISABLE_TRACEPOINTS
+ 	/* Note that we could still be handling received MADs */
+ 	trace_ib_mad_unregister_agent(mad_agent_priv);
+-
++#endif
+ 	/*
+ 	 * Canceling all sends results in dropping received response
+ 	 * MADs, preventing us from queuing additional work
+@@ -1401,9 +1472,9 @@ static int handle_outgoing_dr_smp(struct
+ 	 */
+ 	if (opa && smp->class_version == OPA_SM_CLASS_VERSION) {
+ 		u32 opa_drslid;
+-
++#ifndef MLX_DISABLE_TRACEPOINTS
+ 		trace_ib_mad_handle_out_opa_smi(opa_smp);
+-
++#endif
+ 		if ((opa_get_smp_direction(opa_smp)
+ 		     ? opa_smp->route.dr.dr_dlid : opa_smp->route.dr.dr_slid) ==
+ 		     OPA_LID_PERMISSIVE &&
+@@ -1429,8 +1500,9 @@ static int handle_outgoing_dr_smp(struct
+ 		    opa_smi_check_local_returning_smp(opa_smp, device) == IB_SMI_DISCARD)
+ 			goto out;
+ 	} else {
++#ifndef MLX_DISABLE_TRACEPOINTS
+ 		trace_ib_mad_handle_out_ib_smi(smp);
+-
++#endif
+ 		if ((ib_get_smp_direction(smp) ? smp->dr_dlid : smp->dr_slid) ==
+ 		     IB_LID_PERMISSIVE &&
+ 		     smi_handle_dr_smp_send(smp, rdma_cap_ib_switch(device), port_num) ==
+@@ -1808,7 +1880,9 @@ int ib_send_mad(struct ib_mad_send_wr_pr
+ 
+ 	spin_lock_irqsave(&qp_info->send_queue.lock, flags);
+ 	if (qp_info->send_queue.count < qp_info->send_queue.max_active) {
++#ifndef MLX_DISABLE_TRACEPOINTS
+ 		trace_ib_mad_ib_send_mad(mad_send_wr, qp_info);
++#endif
+ 		ret = ib_post_send(mad_agent->qp, &mad_send_wr->send_wr.wr,
+ 				   NULL);
+ 		list = &qp_info->send_queue.list;
+@@ -2455,7 +2529,6 @@ out:
+ 		deref_mad_agent(mad_agent);
+ 		mad_agent = NULL;
+ 	}
+-
+ 	return mad_agent;
+ }
+ 
+@@ -2710,9 +2783,9 @@ static enum smi_action handle_ib_smi(con
+ {
+ 	enum smi_forward_action retsmi;
+ 	struct ib_smp *smp = (struct ib_smp *)recv->mad;
+-
++#ifndef MLX_DISABLE_TRACEPOINTS
+ 	trace_ib_mad_handle_ib_smi(smp);
+-
++#endif
+ 	if (smi_handle_dr_smp_recv(smp,
+ 				   rdma_cap_ib_switch(port_priv->device),
+ 				   port_num,
+@@ -2797,9 +2870,9 @@ handle_opa_smi(struct ib_mad_port_privat
+ {
+ 	enum smi_forward_action retsmi;
+ 	struct opa_smp *smp = (struct opa_smp *)recv->mad;
+-
++#ifndef MLX_DISABLE_TRACEPOINTS
+ 	trace_ib_mad_handle_opa_smi(smp);
+-
++#endif
+ 	if (opa_smi_handle_dr_smp_recv(smp,
+ 				   rdma_cap_ib_switch(port_priv->device),
+ 				   port_num,
+@@ -2923,10 +2996,10 @@ static void ib_mad_recv_done(struct ib_c
+ 	/* Validate MAD */
+ 	if (!validate_mad((const struct ib_mad_hdr *)recv->mad, qp_info, opa))
+ 		goto out;
+-
++#ifndef MLX_DISABLE_TRACEPOINTS
+ 	trace_ib_mad_recv_done_handler(qp_info, wc,
+ 				       (struct ib_mad_hdr *)recv->mad);
+-
++#endif
+ 	mad_size = recv->mad_size;
+ 	response = alloc_mad_private(mad_size, GFP_KERNEL);
+ 	if (!response)
+@@ -2973,7 +3046,9 @@ static void ib_mad_recv_done(struct ib_c
+ 
+ 	mad_agent = find_mad_agent(port_priv, (const struct ib_mad_hdr *)recv->mad);
+ 	if (mad_agent) {
++#ifndef MLX_DISABLE_TRACEPOINTS
+ 		trace_ib_mad_recv_done_agent(mad_agent);
++#endif
+ 		ib_mad_complete_recv(mad_agent, &recv->header.recv_wc);
+ 		/*
+ 		 * recv is freed up in error cases in ib_mad_complete_recv
+@@ -3140,10 +3215,10 @@ static void ib_mad_send_done(struct ib_c
+ 				   mad_list);
+ 	send_queue = mad_list->mad_queue;
+ 	qp_info = send_queue->qp_info;
+-
++#ifndef MLX_DISABLE_TRACEPOINTS
+ 	trace_ib_mad_send_done_agent(mad_send_wr->mad_agent_priv);
+ 	trace_ib_mad_send_done_handler(mad_send_wr, wc);
+-
++#endif
+ retry:
+ 	ib_dma_unmap_single(mad_send_wr->send_buf.mad_agent->device,
+ 			    mad_send_wr->header_mapping,
+@@ -3175,7 +3250,9 @@ retry:
+ 	ib_mad_complete_send_wr(mad_send_wr, &mad_send_wc);
+ 
+ 	if (queued_send_wr) {
++#ifndef MLX_DISABLE_TRACEPOINTS
+ 		trace_ib_mad_send_done_resend(queued_send_wr, qp_info);
++#endif
+ 		ret = ib_post_send(qp_info->qp, &queued_send_wr->send_wr.wr,
+ 				   NULL);
+ 		if (ret) {
+@@ -3223,7 +3300,9 @@ static bool ib_mad_send_error(struct ib_
+ 		if (mad_send_wr->retry) {
+ 			/* Repost send */
+ 			mad_send_wr->retry = 0;
++#ifndef MLX_DISABLE_TRACEPOINTS
+ 			trace_ib_mad_error_handler(mad_send_wr, qp_info);
++#endif
+ 			ret = ib_post_send(qp_info->qp, &mad_send_wr->send_wr.wr,
+ 					   NULL);
+ 			if (!ret)
+@@ -4139,7 +4218,11 @@ static ssize_t sa_cc_attr_show(struct ko
+ 	return sa->show(cc_obj, buf);
+ }
+ 
++#ifdef CONFIG_COMPAT_IS_CONST_KOBJECT_SYSFS_OPS
+ static const struct sysfs_ops sa_cc_sysfs_ops = {
++#else
++static struct sysfs_ops sa_cc_sysfs_ops = {
++#endif
+ 	.show = sa_cc_attr_show,
+ 	.store = sa_cc_attr_store,
+ };

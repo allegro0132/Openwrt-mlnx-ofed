@@ -1,0 +1,76 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx5/core/fpga/tls.c
+
+Change-Id: Iab5d883ad9cdc840e5a4c943d1c30ee511a3ae80
+---
+ drivers/net/ethernet/mellanox/mlx5/core/fpga/tls.c | 24 ++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/fpga/tls.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/fpga/tls.c
+@@ -31,6 +31,8 @@
+  *
+  */
+ 
++#ifdef HAVE_UAPI_LINUX_TLS_H
++
+ #include <linux/mlx5/device.h>
+ #include "fpga/tls.h"
+ #include "fpga/cmd.h"
+@@ -148,16 +150,28 @@ static int mlx5_fpga_tls_alloc_swid(stru
+ 	return ret;
+ }
+ 
++#ifdef HAVE_IDR_REMOVE_RETURN_VALUE
+ static void *mlx5_fpga_tls_release_swid(struct idr *idr,
++#else
++static void mlx5_fpga_tls_release_swid(struct idr *idr,
++#endif
+ 					spinlock_t *idr_spinlock, u32 swid)
+ {
+ 	unsigned long flags;
++#ifdef HAVE_IDR_REMOVE_RETURN_VALUE
+ 	void *ptr;
++#endif
+ 
+ 	spin_lock_irqsave(idr_spinlock, flags);
++#ifdef HAVE_IDR_REMOVE_RETURN_VALUE
+ 	ptr = idr_remove(idr, swid);
++#else
++	idr_remove(idr, swid);
++#endif
+ 	spin_unlock_irqrestore(idr_spinlock, flags);
++#ifdef HAVE_IDR_REMOVE_RETURN_VALUE
+ 	return ptr;
++#endif
+ }
+ 
+ static void mlx_tls_kfree_complete(struct mlx5_fpga_conn *conn,
+@@ -269,13 +283,21 @@ void mlx5_fpga_tls_del_flow(struct mlx5_
+ 	void *flow;
+ 
+ 	if (direction_sx)
++#ifdef HAVE_IDR_REMOVE_RETURN_VALUE
+ 		flow = mlx5_fpga_tls_release_swid(&tls->tx_idr,
+ 						  &tls->tx_idr_spinlock,
+ 						  swid);
++#else
++		flow = idr_find(&tls->tx_idr, swid);
++#endif
+ 	else
++#ifdef HAVE_IDR_REMOVE_RETURN_VALUE
+ 		flow = mlx5_fpga_tls_release_swid(&tls->rx_idr,
+ 						  &tls->rx_idr_spinlock,
+ 						  swid);
++#else
++		flow = idr_find(&tls->rx_idr, swid);
++#endif
+ 
+ 	if (!flow) {
+ 		mlx5_fpga_err(mdev->fpga, "No flow information for swid %u\n",
+@@ -620,3 +642,5 @@ free_swid:
+ 
+ 	return ret;
+ }
++
++#endif

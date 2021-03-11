@@ -1,0 +1,26 @@
+From: Aya Levin <ayal@mellanox.com>
+Subject: [PATCH] BACKPORT:
+ drivers/net/ethernet/mellanox/mlx5/core/en_accel/ktls.c
+
+Change-Id: I1fac666d44c7f2bea599f1430429036eb2fde03b
+---
+ drivers/net/ethernet/mellanox/mlx5/core/en_accel/ktls.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en_accel/ktls.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en_accel/ktls.c
+@@ -1,6 +1,8 @@
+ // SPDX-License-Identifier: GPL-2.0 OR Linux-OpenIB
+ // Copyright (c) 2019 Mellanox Technologies.
+ 
++#ifdef HAVE_KTLS_STRUCTS
++
+ #include "en.h"
+ #include "en_accel/ktls.h"
+ 
+@@ -91,3 +93,5 @@ void mlx5e_ktls_build_netdev(struct mlx5
+ 
+ 	netdev->tlsdev_ops = &mlx5e_ktls_ops;
+ }
++
++#endif

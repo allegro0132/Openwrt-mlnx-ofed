@@ -1,0 +1,33 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx4/intf.c
+
+Change-Id: I13e2d371d0ec34c626792b3d410f42f3242d7dce
+---
+ drivers/net/ethernet/mellanox/mlx4/intf.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+--- a/drivers/net/ethernet/mellanox/mlx4/intf.c
++++ b/drivers/net/ethernet/mellanox/mlx4/intf.c
+@@ -34,7 +34,9 @@
+ #include <linux/slab.h>
+ #include <linux/export.h>
+ #include <linux/errno.h>
++#ifdef HAVE_DEVLINK_H
+ #include <net/devlink.h>
++#endif
+ 
+ #include "mlx4.h"
+ 
+@@ -266,6 +268,7 @@ void *mlx4_get_protocol_dev(struct mlx4_
+ }
+ EXPORT_SYMBOL_GPL(mlx4_get_protocol_dev);
+ 
++#ifdef HAVE_DEVLINK_H
+ struct devlink_port *mlx4_get_devlink_port(struct mlx4_dev *dev, int port)
+ {
+ 	struct mlx4_port_info *info = &mlx4_priv(dev)->port[port];
+@@ -273,3 +276,4 @@ struct devlink_port *mlx4_get_devlink_po
+ 	return &info->devlink_port;
+ }
+ EXPORT_SYMBOL_GPL(mlx4_get_devlink_port);
++#endif

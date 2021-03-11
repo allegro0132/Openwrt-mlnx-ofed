@@ -1,0 +1,32 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/sw/rxe/rxe_verbs.c
+
+Change-Id: Iae09680cbbb7e933fb8a8fa4caf6a3a2a54c22bb
+---
+ drivers/infiniband/sw/rxe/rxe_verbs.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+--- a/drivers/infiniband/sw/rxe/rxe_verbs.c
++++ b/drivers/infiniband/sw/rxe/rxe_verbs.c
+@@ -31,7 +31,9 @@
+  * SOFTWARE.
+  */
+ 
++#ifdef HAVE_DEVICE_DMA_OPS
+ #include <linux/dma-mapping.h>
++#endif
+ #include <net/addrconf.h>
+ #include <rdma/uverbs_ioctl.h>
+ #include "rxe.h"
+@@ -1180,7 +1182,11 @@ int rxe_register_device(struct rxe_dev *
+ 	dev->local_dma_lkey = 0;
+ 	addrconf_addr_eui48((unsigned char *)&dev->node_guid,
+ 			    rxe->ndev->dev_addr);
++#ifdef HAVE_DEVICE_DMA_OPS
+ 	dev->dev.dma_ops = &dma_virt_ops;
++#else
++	dev->ops.dma_ops = &rxe_dma_mapping_ops;
++#endif
+ 	dma_coerce_mask_and_coherent(&dev->dev,
+ 				     dma_get_required_mask(&dev->dev));
+ 

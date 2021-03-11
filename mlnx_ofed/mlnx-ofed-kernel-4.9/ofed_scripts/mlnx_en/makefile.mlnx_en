@@ -1,0 +1,230 @@
+# $Id: Makefile 9120 2006-08-28 13:01:07Z vlad $
+
+PHONY += all kernel install_kernel install clean clean_kernel
+	
+all:
+.PHONY: $(PHONY)
+
+.DELETE_ON_ERROR:
+
+include ./config.mk
+
+export COMPAT_CONFIG=$(CWD)/compat.config
+export COMPAT_AUTOCONF=$(CWD)/include/linux/compat_autoconf.h
+export KSRC
+export KSRC_OBJ
+export KLIB_BUILD
+export KVERSION
+export MAKE
+
+-include $(COMPAT_CONFIG)
+export CREL=$(shell cat $(CWD)/compat_version)
+export CREL_PRE:=.compat_autoconf_
+export CREL_CHECK:=$(CREL_PRE)$(CREL)
+CFLAGS += \
+	-DCOMPAT_BASE="\"$(shell cat compat_base)\"" \
+	-DCOMPAT_BASE_TREE="\"$(shell cat compat_base_tree)\"" \
+	-DCOMPAT_BASE_TREE_VERSION="\"$(shell cat compat_base_tree_version)\"" \
+	-DCOMPAT_PROJECT="\"Compat-mlnx-ofed\"" \
+	-DCOMPAT_VERSION="\"$(shell cat compat_version)\"" \
+
+DEPMOD  = /sbin/depmod
+INSTALL_MOD_DIR ?= $(shell ( test -f /etc/SuSE-release && echo updates ) || ( test -f /etc/SUSE-brand && echo updates ) || ( echo extra/mellanox-mlnx-en ) )
+
+ifeq ($(CONFIG_MEMTRACK),m)
+        export KERNEL_MEMTRACK_CFLAGS = -include $(CWD)/drivers/net/ethernet/mellanox/debug/mtrack.h
+else
+        export KERNEL_MEMTRACK_CFLAGS =
+endif
+
+# GCC earlier than 4.6.0 will build modules which require 'mcount',
+# and this symbol will not be available in the kernel if the kernel was
+# compiled with GCC 4.6.0 and above.
+# therefore, to prevent unknown symbol issues we disable function tracing.
+#
+CC  = $(CROSS_COMPILE)gcc
+CPP = $(CC) -E
+
+# try-run
+# Usage: option = $(call try-run, $(CC)...-o "$$TMP",option-ok,otherwise)
+# Exit code chooses option. "$$TMP" is can be used as temporary file and
+# is automatically cleaned up.
+TMPOUT := /tmp/
+try-run = $(shell set -e;				\
+	TMP="$(TMPOUT).$$$$.tmp";		\
+	TMPO="$(TMPOUT).$$$$.o";		\
+	if ($(1)) >/dev/null 2>&1;		\
+	then echo "$(2)";				\
+	else echo "$(3)";				\
+	fi;								\
+	rm -f "$$TMP" "$$TMPO")
+
+# cc-option
+# Usage: cflags-y += $(call cc-option,-march=winchip-c6,-march=i586)
+cc-option = $(call try-run,\
+	$(CC) $(KBUILD_CPPFLAGS) $(KBUILD_CFLAGS) $(1) -c -x c /dev/null -o "$$TMP",$(1),$(2))
+
+ifneq ($(call cc-option,-Werror=date-time),)
+KCFLAGS += -Wno-date-time
+export KCFLAGS
+endif
+
+# Pass CFLAGS_RETPOLINE to the kernel's build system. Even if it was
+# not defined: we test there if it is empty
+export CFLAGS_RETPOLINE
+
+CPP_MAJOR := $(shell $(CPP) -dumpversion 2>&1 | cut -d'.' -f1)
+CPP_MINOR := $(shell $(CPP) -dumpversion 2>&1 | cut -d'.' -f2)
+CPP_PATCH := $(shell $(CPP) -dumpversion 2>&1 | cut -d'.' -f3)
+# Assumes that major, minor, and patch cannot exceed 999
+CPP_VERS  := $(shell expr 0$(CPP_MAJOR) \* 1000000 + 0$(CPP_MINOR) \* 1000 + 0$(CPP_PATCH))
+compile_h=$(shell /bin/ls -1 $(KSRC_OBJ)/include/*/compile.h 2> /dev/null | head -1)
+ifneq ($(compile_h),)
+KERNEL_GCC_MAJOR := $(shell grep LINUX_COMPILER $(compile_h) | sed -r -e 's/.*gcc version ([0-9\.\-]*) .*/\1/g' | cut -d'.' -f1)
+KERNEL_GCC_MINOR := $(shell grep LINUX_COMPILER $(compile_h) | sed -r -e 's/.*gcc version ([0-9\.\-]*) .*/\1/g' | cut -d'.' -f2)
+KERNEL_GCC_PATCH := $(shell grep LINUX_COMPILER $(compile_h) | sed -r -e 's/.*gcc version ([0-9\.\-]*) .*/\1/g' | cut -d'.' -f3)
+KERNEL_GCC_VER  := $(shell expr 0$(KERNEL_GCC_MAJOR) \* 1000000 + 0$(KERNEL_GCC_MINOR) \* 1000 + 0$(KERNEL_GCC_PATCH))
+ifneq ($(shell if [ $(CPP_VERS) -lt 4006000 ] && [ $(KERNEL_GCC_VER) -ge 4006000 ]; then \
+					echo "YES"; else echo ""; fi),)
+$(info Warning: The kernel was compiled with GCC newer than 4.6.0, while the current GCC is older than 4.6.0, Disabling function tracing to prevent unknown symbol issues...)
+override WITH_MAKE_PARAMS += CONFIG_FUNCTION_TRACER= CONFIG_HAVE_FENTRY=
+endif
+ifneq ($(shell if [ $(CPP_VERS) -ge 4006000 ] && [ $(KERNEL_GCC_VER) -lt 4006000 ]; then \
+					echo "YES"; else echo ""; fi),)
+$(info Warning: The kernel was compiled with GCC older than 4.6.0, while the current GCC is newer than 4.6.0, Disabling function tracing to prevent unknown symbol issues...)
+override WITH_MAKE_PARAMS += CONFIG_FUNCTION_TRACER= CONFIG_HAVE_FENTRY=
+endif
+endif
+
+ifneq ($(shell if (echo $(KVERSION) | grep -qE 'uek'); then \
+					echo "YES"; else echo ""; fi),)
+override WITH_MAKE_PARAMS += ctf-dir=$(CWD)/.ctf
+CFLAGS += -DMLX_DISABLE_TRACEPOINTS
+endif
+
+ifneq ($(shell /usr/bin/lsb_release -s -i 2>/dev/null | grep -qiE "debian|ubuntu" 2>/dev/null && echo YES || echo ''),)
+CFLAGS += -DMLX_DISABLE_TRACEPOINTS
+endif
+
+$(COMPAT_AUTOCONF): $(COMPAT_CONFIG)
+	+@$(CWD)/ofed_scripts/gen-compat-autoconf.sh $(COMPAT_CONFIG) > $(COMPAT_AUTOCONF)
+
+$(COMPAT_CONFIG):
+	+@$(CWD)/ofed_scripts/gen-compat-config.sh > $(COMPAT_CONFIG)
+
+all: kernel
+
+install: install_kernel
+install_kernel: install_modules
+
+autoconf_h=$(shell /bin/ls -1 $(KSRC_OBJ)/include/*/autoconf.h 2> /dev/null | head -1)
+kconfig_h=$(shell /bin/ls -1 $(KSRC_OBJ)/include/*/kconfig.h 2> /dev/null | head -1)
+
+ifneq ($(kconfig_h),)
+KCONFIG_H = -include $(kconfig_h)
+endif
+
+V ?= 0
+
+#########################
+#	make kernel	#
+#########################
+#NB: The LINUXINCLUDE value comes from main kernel Makefile
+#    with local directories prepended. This eventually affects
+#    CPPFLAGS in the kernel Makefile
+kernel: $(COMPAT_CONFIG) $(COMPAT_AUTOCONF)
+	@echo "Building kernel modules"
+	@echo "Kernel version: $(KVERSION)"
+	@echo "Modules directory: $(INSTALL_MOD_PATH)/lib/modules/$(KVERSION)/$(INSTALL_MOD_DIR)"
+	@echo "Kernel build: $(KSRC_OBJ)"
+	@echo "Kernel sources: $(KSRC)"
+	env CWD=$(CWD) BACKPORT_INCLUDES=$(BACKPORT_INCLUDES) \
+		$(MAKE) -C $(KSRC_OBJ) M="$(CWD)" \
+		V=$(V) KBUILD_NOCMDDEP=1 $(WITH_MAKE_PARAMS) \
+		CONFIG_COMPAT_VERSION=$(CONFIG_COMPAT_VERSION) \
+		CONFIG_COMPAT_KOBJECT_BACKPORT=$(CONFIG_COMPAT_KOBJECT_BACKPORT) \
+		CONFIG_MEMTRACK=$(CONFIG_MEMTRACK) \
+		CONFIG_MLX4_CORE=$(CONFIG_MLX4_CORE) \
+		CONFIG_MLX4_CORE_GEN2=$(CONFIG_MLX4_CORE_GEN2) \
+		CONFIG_MLX4_EN=$(CONFIG_MLX4_EN) \
+		CONFIG_MLX4_EN_DCB=$(CONFIG_MLX4_EN_DCB) \
+		CONFIG_MLX5_CORE=$(CONFIG_MLX5_CORE) \
+		CONFIG_MLX5_CORE_EN=$(CONFIG_MLX5_CORE_EN) \
+		CONFIG_MLX5_CORE_EN_DCB=$(CONFIG_MLX5_CORE_EN_DCB) \
+		CONFIG_MLX5_EN_ARFS=$(CONFIG_MLX5_EN_ARFS) \
+		CONFIG_MLX5_EN_RXNFC=$(CONFIG_MLX5_EN_RXNFC) \
+		CONFIG_MLX5_ACCEL=$(CONFIG_MLX5_ACCEL) \
+		CONFIG_MLX5_EN_TLS=$(CONFIG_MLX5_EN_TLS) \
+		CONFIG_MLX5_TLS=$(CONFIG_MLX5_TLS) \
+		CONFIG_MLX5_SW_STEERING=$(CONFIG_MLX5_SW_STEERING) \
+		CONFIG_MLX5_ESWITCH=$(CONFIG_MLX5_ESWITCH) \
+		CONFIG_MLX5_MPFS=$(CONFIG_MLX5_MPFS) \
+		CONFIG_MLXFW=$(CONFIG_MLXFW) \
+		CONFIG_DTRACE= \
+		CONFIG_CTF= \
+		LINUXINCLUDE=' \
+		$(CFLAGS) \
+		-include $(autoconf_h) \
+		$(KCONFIG_H) \
+		-include $(CWD)/include/linux/compat-2.6.h \
+		$(BACKPORT_INCLUDES) \
+		$(KERNEL_MEMTRACK_CFLAGS) \
+		$(SYSTUNE_INCLUDE) \
+		$(MLNX_EN_EXTRA_CFLAGS) \
+		-I$(CWD)/include \
+		-I$(CWD)/include/uapi \
+		$$(if $$(CONFIG_XEN),-D__XEN_INTERFACE_VERSION__=$$(CONFIG_XEN_INTERFACE_VERSION)) \
+		$$(if $$(CONFIG_XEN),-I$$(srctree)/arch/x86/include/mach-xen) \
+		-I$$(srctree)/arch/$$(SRCARCH)/include \
+		-Iarch/$$(SRCARCH)/include/generated \
+		-Iinclude \
+		-I$$(srctree)/arch/$$(SRCARCH)/include/uapi \
+		-Iarch/$$(SRCARCH)/include/generated/uapi \
+		-I$$(srctree)/include \
+		-I$$(srctree)/include/uapi \
+		-Iinclude/generated/uapi \
+		$$(if $$(KBUILD_SRC),-Iinclude2 -I$$(srctree)/include) \
+		-I$$(srctree)/arch/$$(SRCARCH)/include \
+		-Iarch/$$(SRCARCH)/include/generated \
+		' \
+		modules
+
+
+#########################
+#	Install kernel	#
+#########################
+install_modules:
+	@echo "Installing kernel modules"
+
+ifeq ($(shell /usr/bin/lsb_release -s -i 2>/dev/null | grep -qiE "debian|ubuntu" 2>/dev/null && echo YES || echo ''),)
+	$(MAKE) -C $(KSRC_OBJ) M="$(CWD)" \
+		INSTALL_MOD_PATH=$(INSTALL_MOD_PATH) \
+		INSTALL_MOD_DIR=$(INSTALL_MOD_DIR) \
+		$(WITH_MAKE_PARAMS) modules_install;
+else
+	install -d $(INSTALL_MOD_PATH)/lib/modules/$(KVERSION)/updates/dkms/
+	find $(CWD)/ \( -name "*.ko" -o -name "*.ko.gz" \) -exec /bin/cp -f '{}' $(INSTALL_MOD_PATH)/lib/modules/$(KVERSION)/updates/dkms/ \;
+endif
+
+	if [ ! -n "$(INSTALL_MOD_PATH)" ]; then $(DEPMOD) $(KVERSION);fi;
+
+clean: clean_kernel
+
+clean_kernel:
+	$(MAKE) -C $(KSRC_OBJ) M="$(CWD)" $(WITH_MAKE_PARAMS) clean
+	@/bin/rm -f $(clean-files)
+
+clean-files := Module.symvers modules.order Module.markers compat/modules.order
+clean-files += $(COMPAT_CONFIG) $(COMPAT_AUTOCONF)
+
+help:
+	@echo
+	@echo kernel: 		        build kernel modules
+	@echo all: 		        build kernel modules
+	@echo
+	@echo install_kernel:	        install kernel modules under $(INSTALL_MOD_PATH)/lib/modules/$(KVERSION)/$(INSTALL_MOD_DIR)
+	@echo install:	        	run install_kernel
+	@echo
+	@echo clean:	        	delete kernel modules binaries
+	@echo clean_kernel:	        delete kernel modules binaries
+	@echo

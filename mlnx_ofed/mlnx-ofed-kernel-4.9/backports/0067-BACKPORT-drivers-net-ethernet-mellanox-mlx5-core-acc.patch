@@ -1,0 +1,41 @@
+From: Aya Levin <ayal@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx5/core/accel/tls.c
+
+Change-Id: I47beceb4ea383c43b5ec03584038423448f6c4f7
+---
+ drivers/net/ethernet/mellanox/mlx5/core/accel/tls.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/accel/tls.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/accel/tls.c
+@@ -31,6 +31,8 @@
+  *
+  */
+ 
++#ifdef HAVE_UAPI_LINUX_TLS_H
++
+ #include <linux/mlx5/device.h>
+ 
+ #include "accel/tls.h"
+@@ -101,6 +103,7 @@ int mlx5_ktls_create_key(struct mlx5_cor
+ 		sz_bytes = sizeof(info->key);
+ 		break;
+ 	}
++#ifdef TLS_CIPHER_AES_GCM_256
+ 	case TLS_CIPHER_AES_GCM_256: {
+ 		struct tls12_crypto_info_aes_gcm_256 *info =
+ 			(struct tls12_crypto_info_aes_gcm_256 *)crypto_info;
+@@ -109,6 +112,7 @@ int mlx5_ktls_create_key(struct mlx5_cor
+ 		sz_bytes = sizeof(info->key);
+ 		break;
+ 	}
++#endif
+ 	default:
+ 		return -EINVAL;
+ 	}
+@@ -123,3 +127,5 @@ void mlx5_ktls_destroy_key(struct mlx5_c
+ 	mlx5_destroy_encryption_key(mdev, key_id);
+ }
+ #endif
++
++#endif

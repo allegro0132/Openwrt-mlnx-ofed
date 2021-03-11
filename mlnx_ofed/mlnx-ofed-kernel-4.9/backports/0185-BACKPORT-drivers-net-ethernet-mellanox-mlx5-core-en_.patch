@@ -1,0 +1,31 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx5/core/en_common.c
+
+Change-Id: I56f9aa4173fb655cbe8d17c379caf6b810a6ee08
+---
+ drivers/net/ethernet/mellanox/mlx5/core/en_common.c | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en_common.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en_common.c
+@@ -213,6 +213,20 @@ static const u32 mlx5e_link_speed[MLX5E_
+ 	[MLX5E_50GBASE_KR2]       = 50000,
+ };
+ 
++static const u32 mlx5e_ext_link_speed[MLX5E_EXT_LINK_MODES_NUMBER] = {
++	[MLX5E_SGMII_100M]			= 100,
++	[MLX5E_1000BASE_X_SGMII]		= 1000,
++	[MLX5E_5GBASE_R]			= 5000,
++	[MLX5E_10GBASE_XFI_XAUI_1]		= 10000,
++	[MLX5E_40GBASE_XLAUI_4_XLPPI_4]		= 40000,
++	[MLX5E_25GAUI_1_25GBASE_CR_KR]		= 25000,
++	[MLX5E_50GAUI_2_LAUI_2_50GBASE_CR2_KR2]	= 50000,
++	[MLX5E_50GAUI_1_LAUI_1_50GBASE_CR_KR]	= 50000,
++	[MLX5E_CAUI_4_100GBASE_CR4_KR4]		= 100000,
++	[MLX5E_100GAUI_2_100GBASE_CR2_KR2]	= 100000,
++	[MLX5E_200GAUI_4_200GBASE_CR4_KR4]	= 200000,
++};
++
+ u32 mlx5e_ptys_to_speed(u32 eth_proto_oper)
+ {
+ 	unsigned long temp = (unsigned long)eth_proto_oper;

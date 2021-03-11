@@ -1,0 +1,28 @@
+From: Alaa Hleihel <alaa@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/nvme/target/fcloop.c
+
+Change-Id: I5024bc7accb65ab904fcbe79d200aaabaa98e5b0
+---
+ drivers/nvme/target/fcloop.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+--- a/drivers/nvme/target/fcloop.c
++++ b/drivers/nvme/target/fcloop.c
+@@ -2,6 +2,8 @@
+ /*
+  * Copyright (c) 2016 Avago Technologies.  All rights reserved.
+  */
++#ifdef HAVE_LINUX_NVME_FC_DRIVER_H
++
+ #ifdef pr_fmt
+ #undef pr_fmt
+ #endif
+@@ -1379,3 +1381,8 @@ module_init(fcloop_init);
+ module_exit(fcloop_exit);
+ 
+ MODULE_LICENSE("GPL v2");
++#ifdef RETPOLINE_MLNX
++MODULE_INFO(retpoline, "Y");
++#endif
++
++#endif /* HAVE_LINUX_NVME_FC_DRIVER_H */

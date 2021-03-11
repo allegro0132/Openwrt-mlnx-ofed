@@ -1,0 +1,14 @@
+Source: mlnx-nfsrdma
+Section: kernel
+Priority: optional
+Maintainer: Mellanox Technologies <support@mellanox.com>
+Build-Depends: debhelper (>= 8.0.0), autotools-dev, bzip2, make
+Standards-Version: 1.0
+Homepage: http://www.mellanox.com
+
+Package: mlnx-nfsrdma-modules
+Section: kernel
+Architecture: any
+Depends: mlnx-ofed-kernel-modules, ${misc:Depends}
+Description: NFS RDMA kernel modules
+ This package provides the binary code for the NFS RDMA kernel modules.

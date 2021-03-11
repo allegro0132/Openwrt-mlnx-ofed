@@ -1,0 +1,60 @@
+From: Aya Levin <ayal@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx5/core/en/txrx.h
+
+Change-Id: Iefcbbfdbe26b39a78b35e870e1b3bd4b35758ce6
+---
+ drivers/net/ethernet/mellanox/mlx5/core/en/txrx.h | 15 +++++++++++++--
+ 1 file changed, 13 insertions(+), 2 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en/txrx.h
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en/txrx.h
+@@ -10,7 +10,7 @@
+ #define MLX5E_SQ_STOP_ROOM (MLX5_SEND_WQE_MAX_WQEBBS +\
+ 			    MLX5E_SQ_NOPS_ROOM)
+ 
+-#ifndef CONFIG_MLX5_EN_TLS
++#if !defined(CONFIG_MLX5_EN_TLS) || !defined(HAVE_KTLS_STRUCTS)
+ #define MLX5E_SQ_TLS_ROOM (0)
+ #else
+ /* TLS offload requires additional stop_room for:
+@@ -104,8 +104,11 @@ mlx5e_notify_hw(struct mlx5_wq_cyc *wq,
+ {
+ 	ctrl->fm_ce_se = MLX5_WQE_CTRL_CQ_UPDATE;
+ 	/* ensure wqe is visible to device before updating doorbell record */
++#ifdef dma_wmb
+ 	dma_wmb();
+-
++#else
++	wmb();
++#endif
+ 	*wq->db = cpu_to_be32(pc);
+ 
+ 	/* ensure doorbell record is visible to device before ringing the
+@@ -213,6 +216,7 @@ mlx5e_set_eseg_swp(struct sk_buff *skb,
+ 			eseg->swp_flags |= MLX5_ETH_WQE_SWP_OUTER_L4_UDP;
+ 	}
+ 
++#ifdef HAVE_SKB_INNER_NETWORK_HEADER
+ 	if (swp_spec->is_tun) {
+ 		eseg->swp_inner_l3_offset = skb_inner_network_offset(skb) / 2;
+ 		if (swp_spec->tun_l3_proto == htons(ETH_P_IPV6))
+@@ -222,12 +226,19 @@ mlx5e_set_eseg_swp(struct sk_buff *skb,
+ 		if (swp_spec->l3_proto == htons(ETH_P_IPV6))
+ 			eseg->swp_flags |= MLX5_ETH_WQE_SWP_INNER_L3_IPV6;
+ 	}
++#endif
+ 	switch (swp_spec->tun_l4_proto) {
+ 	case IPPROTO_UDP:
+ 		eseg->swp_flags |= MLX5_ETH_WQE_SWP_INNER_L4_UDP;
+ 		/* fall through */
+ 	case IPPROTO_TCP:
++#ifdef HAVE_SKB_INNER_TRANSPORT_HEADER
++#ifdef HAVE_SKB_INNER_TRANSPORT_OFFSET
+ 		eseg->swp_inner_l4_offset = skb_inner_transport_offset(skb) / 2;
++#else
++		eseg->swp_inner_l4_offset = (skb_inner_transport_header(skb)  - skb->data) / 2;
++#endif /*HAVE_SKB_INNER_TRANSPORT_OFFSET*/
++#endif /*HAVE_SKB_INNER_TRANSPORT_HEADER*/
+ 		break;
+ 	}
+ }

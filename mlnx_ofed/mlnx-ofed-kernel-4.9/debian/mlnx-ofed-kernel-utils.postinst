@@ -1,0 +1,38 @@
+#!/bin/bash
+
+dist=`lsb_release -s -i | tr '[:upper:]' '[:lower:]'`
+dist_ver=`lsb_release -s -r`
+
+if [ "X$dist" != "Xubuntu" ]; then
+	/usr/sbin/update-rc.d openibd defaults > /dev/null 2>&1
+fi
+
+if (systemctl 2>/dev/null | grep -qw "\\-\.mount" 2>/dev/null); then
+	systemctl daemon-reload >/dev/null 2>&1 || true
+	systemctl enable openibd >/dev/null  2>&1 || true
+	cat /proc/sys/kernel/random/boot_id 2>/dev/null | sed -e 's/-//g' > /var/run/openibd.bootid || true
+	test -s /var/run/openibd.bootid || echo manual > /var/run/openibd.bootid || true
+fi
+
+# set specific module parameter for Ubuntu
+echo "options ib_ipoib send_queue_size=128 recv_queue_size=128" >> /etc/modprobe.d/ib_ipoib.conf
+
+# Update limits.conf (but not for Containers)
+if [ ! -e "/.dockerenv" ] && ! (grep -q docker /proc/self/cgroup 2>/dev/null); then
+	if [ -e /etc/security/limits.conf ]; then
+		LIMITS_UPDATED=0
+		if ! (grep -qE "soft.*memlock" /etc/security/limits.conf 2>/dev/null); then
+			echo "* soft memlock unlimited" >> /etc/security/limits.conf
+			LIMITS_UPDATED=1
+		fi
+		if ! (grep -qE "hard.*memlock" /etc/security/limits.conf 2>/dev/null); then
+			echo "* hard memlock unlimited" >> /etc/security/limits.conf
+			LIMITS_UPDATED=1
+		fi
+		if [ $LIMITS_UPDATED -eq 1 ]; then
+			echo "Configured /etc/security/limits.conf"
+		fi
+	fi
+fi
+
+exit 0

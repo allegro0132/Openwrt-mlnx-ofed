@@ -1,0 +1,61 @@
+From 774765051515cf7222ac6dc249e5cedb40fc76d9 Mon Sep 17 00:00:00 2001
+From: Alaa Hleihel <alaa@mellanox.com>
+Date: Mon, 5 Sep 2016 18:32:23 +0300
+Subject: [PATCH] mlx4_en: Ethernet only
+
+Change-Id: Ie95f943d5f117faa37c9105ace94850646d7620a
+Signed-off-by: Alaa Hleihel <alaa@mellanox.com>
+---
+ drivers/net/ethernet/mellanox/mlx4/main.c | 14 ++++++++++++--
+ 1 file changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/ethernet/mellanox/mlx4/main.c b/drivers/net/ethernet/mellanox/mlx4/main.c
+index f6c065528b31..9cc5225e1be6 100644
+--- a/drivers/net/ethernet/mellanox/mlx4/main.c
++++ b/drivers/net/ethernet/mellanox/mlx4/main.c
+@@ -60,9 +60,10 @@ MODULE_VERSION(DRV_VERSION);
+ 
+ struct workqueue_struct *mlx4_wq;
+ 
+-static int mlx4_en_only_mode = 0;
++static int mlx4_en_only_mode = 1;
+ module_param(mlx4_en_only_mode, int, 0444);
+-MODULE_PARM_DESC(mlx4_en_only_mode, "Load in Ethernet only mode");
++MODULE_PARM_DESC(mlx4_en_only_mode, "Load in Ethernet only mode "
++		 "(Ethernet only package, this parameter is disabled)");
+ 
+ #ifdef CONFIG_MLX4_DEBUG
+ 
+@@ -923,6 +924,9 @@ static int mlx4_dev_cap(struct mlx4_dev *dev, struct mlx4_dev_cap *dev_cap)
+ 	int err;
+ 	int i;
+ 
++	/* Ethernet only package */
++	mlx4_en_only_mode = 1;
++
+ 	err = mlx4_QUERY_DEV_CAP(dev, dev_cap);
+ 	if (err) {
+ 		mlx4_err(dev, "QUERY_DEV_CAP command failed, aborting\n");
+@@ -1769,6 +1773,9 @@ static void mlx4_request_modules(struct mlx4_dev *dev)
+ #define EN_DRV_NAME	"mlx4_en"
+ #define IB_DRV_NAME	"mlx4_ib"
+ 
++	/* Ethernet only package */
++	mlx4_en_only_mode = 1;
++
+ 	for (port = 1; port <= dev->caps.num_ports; port++) {
+ 		if (dev->caps.port_type[port] == MLX4_PORT_TYPE_IB)
+ 			has_ib_port = true;
+@@ -5107,6 +5114,9 @@ static int __init mlx4_verify_params(void)
+ {
+ 	int status;
+ 
++	/* Ethernet only package */
++	mlx4_en_only_mode = 1;
++
+ 	if (mlx4_en_only_mode) {
+ 		port_type_array.dbdf2val.def_val[0]	= MLX4_PORT_TYPE_ETH;
+ 		port_type_array.dbdf2val.def_val[1]	= MLX4_PORT_TYPE_ETH;
+-- 
+1.8.3.1
+

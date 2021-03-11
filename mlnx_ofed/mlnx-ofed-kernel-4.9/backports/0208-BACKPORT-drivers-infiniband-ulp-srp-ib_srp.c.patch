@@ -1,0 +1,784 @@
+From: Sergey Gorenko <sergeygo@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/ulp/srp/ib_srp.c
+
+Change-Id: I87db11ac4a67ae0c9c186703ccabdf3f0d9352fd
+---
+ drivers/infiniband/ulp/srp/ib_srp.c | 374 +++++++++++++++++++++++++++-
+ 1 file changed, 370 insertions(+), 4 deletions(-)
+
+--- a/drivers/infiniband/ulp/srp/ib_srp.c
++++ b/drivers/infiniband/ulp/srp/ib_srp.c
+@@ -64,10 +64,30 @@
+ MODULE_AUTHOR("Roland Dreier");
+ MODULE_DESCRIPTION("InfiniBand SCSI RDMA Protocol initiator");
+ MODULE_LICENSE("Dual BSD/GPL");
++#ifdef RETPOLINE_MLNX
++MODULE_INFO(retpoline, "Y");
++#endif
+ 
+ #if !defined(CONFIG_DYNAMIC_DEBUG)
+ #define DEFINE_DYNAMIC_DEBUG_METADATA(name, fmt)
+ #define DYNAMIC_DEBUG_BRANCH(descriptor) false
++#else
++#if defined(DEFINE_DYNAMIC_DEBUG_METADATA) && !defined(DYNAMIC_DEBUG_BRANCH)
++#ifdef DEBUG
++#define DYNAMIC_DEBUG_BRANCH(descriptor) \
++	        likely(descriptor.flags & _DPRINTK_FLAGS_PRINT)
++#else
++#define DYNAMIC_DEBUG_BRANCH(descriptor) \
++	        unlikely(descriptor.flags & _DPRINTK_FLAGS_PRINT)
++#endif
++#endif
++#endif
++
++#ifndef DEFINE_DYNAMIC_DEBUG_METADATA
++#define DEFINE_DYNAMIC_DEBUG_METADATA(name, fmt)
++#endif
++#ifndef DYNAMIC_DEBUG_BRANCH
++#define DYNAMIC_DEBUG_BRANCH(descriptor) false
+ #endif
+ 
+ static unsigned int srp_sg_tablesize;
+@@ -87,8 +107,13 @@ MODULE_PARM_DESC(cmd_sg_entries,
+ 		 "Default number of gather/scatter entries in the SRP command (default is 12, max 255)");
+ 
+ module_param(indirect_sg_entries, uint, 0444);
++#ifdef HAVE_SG_MAX_SEGMENTS
+ MODULE_PARM_DESC(indirect_sg_entries,
+ 		 "Default max number of gather/scatter entries (default is 12, max is " __stringify(SG_MAX_SEGMENTS) ")");
++#else
++MODULE_PARM_DESC(indirect_sg_entries,
++		 "Default max number of gather/scatter entries (default is 12, max is " __stringify(SCSI_MAX_SG_CHAIN_SEGMENTS) ")");
++#endif
+ 
+ module_param(allow_ext_sg, bool, 0444);
+ MODULE_PARM_DESC(allow_ext_sg,
+@@ -109,6 +134,7 @@ MODULE_PARM_DESC(register_always,
+ module_param(never_register, bool, 0444);
+ MODULE_PARM_DESC(never_register, "Never register memory");
+ 
++#ifdef HAVE_MODULEPARAM_KERNEL_PARAM_OPS
+ static const struct kernel_param_ops srp_tmo_ops;
+ 
+ static int srp_reconnect_delay = 20;
+@@ -127,6 +153,30 @@ MODULE_PARM_DESC(fast_io_fail_tmo,
+ static int srp_dev_loss_tmo = 600;
+ module_param_cb(dev_loss_tmo, &srp_tmo_ops, &srp_dev_loss_tmo,
+ 		S_IRUGO | S_IWUSR);
++#else
++static int srp_tmo_get(char *buffer, const struct kernel_param *kp);
++static int srp_tmo_set(const char *val, const struct kernel_param *kp);
++
++static int srp_reconnect_delay = 20;
++module_param_call(reconnect_delay, (param_set_fn)srp_tmo_set,
++		  (param_get_fn)srp_tmo_get, &srp_reconnect_delay,
++		  S_IRUGO | S_IWUSR);
++MODULE_PARM_DESC(reconnect_delay, "Time between successive reconnect attempts");
++
++static int srp_fast_io_fail_tmo = 15;
++module_param_call(fast_io_fail_tmo, (param_set_fn)srp_tmo_set,
++		  (param_get_fn)srp_tmo_get, &srp_fast_io_fail_tmo,
++		  S_IRUGO | S_IWUSR);
++MODULE_PARM_DESC(fast_io_fail_tmo,
++		 "Number of seconds between the observation of a transport"
++		 " layer error and failing all I/O. \"off\" means that this"
++		 " functionality is disabled.");
++
++static int srp_dev_loss_tmo = 600;
++module_param_call(dev_loss_tmo, (param_set_fn)srp_tmo_set,
++		  (param_get_fn)srp_tmo_get, &srp_dev_loss_tmo,
++		  S_IRUGO | S_IWUSR);
++#endif
+ MODULE_PARM_DESC(dev_loss_tmo,
+ 		 "Maximum number of seconds that the SRP transport should"
+ 		 " insulate transport layer errors. After this time has been"
+@@ -206,10 +256,12 @@ out:
+ 	return res;
+ }
+ 
++#ifdef HAVE_MODULEPARAM_KERNEL_PARAM_OPS
+ static const struct kernel_param_ops srp_tmo_ops = {
+ 	.get = srp_tmo_get,
+ 	.set = srp_tmo_set,
+ };
++#endif
+ 
+ static inline struct srp_target_port *host_to_target(struct Scsi_Host *host)
+ {
+@@ -1042,6 +1094,9 @@ static int srp_alloc_req_data(struct srp
+ 	dma_addr_t dma_addr;
+ 	int i, ret = -ENOMEM;
+ 
++#ifndef HAVE_BLK_TAGS
++	INIT_LIST_HEAD(&ch->free_reqs);
++#endif
+ 	ch->req_ring = kcalloc(target->req_ring_size, sizeof(*ch->req_ring),
+ 			       GFP_KERNEL);
+ 	if (!ch->req_ring)
+@@ -1074,6 +1129,10 @@ static int srp_alloc_req_data(struct srp
+ 			goto out;
+ 
+ 		req->indirect_dma_addr = dma_addr;
++#ifndef HAVE_BLK_TAGS
++		req->tag = build_srp_tag(ch - target->ch, i);
++		list_add_tail(&req->list, &ch->free_reqs);
++#endif
+ 	}
+ 	ret = 0;
+ 
+@@ -1109,7 +1168,9 @@ static void srp_remove_target(struct srp
+ 	scsi_remove_host(target->scsi_host);
+ 	srp_stop_rport_timers(target->rport);
+ 	srp_disconnect_target(target);
++#ifdef HAVE_KOBJ_NS_GRAB_CURRENT_EXPORTED
+ 	kobj_ns_drop(KOBJ_NS_TYPE_NET, target->net);
++#endif
+ 	for (i = 0; i < target->ch_count; i++) {
+ 		ch = &target->ch[i];
+ 		srp_free_ch_ib(target, ch);
+@@ -1120,6 +1181,10 @@ static void srp_remove_target(struct srp
+ 		ch = &target->ch[i];
+ 		srp_free_req_data(target, ch);
+ 	}
++#ifndef HAVE_BLK_TAGS
++	kfree(target->mq_map);
++	target->mq_map = NULL;
++#endif
+ 	kfree(target->ch);
+ 	target->ch = NULL;
+ 
+@@ -1328,6 +1393,9 @@ static void srp_free_req(struct srp_rdma
+ 
+ 	spin_lock_irqsave(&ch->lock, flags);
+ 	ch->req_lim += req_lim_delta;
++#ifndef HAVE_BLK_TAGS
++	list_add_tail(&req->list, &ch->free_reqs);
++#endif
+ 	spin_unlock_irqrestore(&ch->lock, flags);
+ }
+ 
+@@ -2118,6 +2186,9 @@ static void srp_process_rsp(struct srp_r
+ 	struct srp_request *req;
+ 	struct scsi_cmnd *scmnd;
+ 	unsigned long flags;
++#ifndef HAVE_BLK_TAGS
++	unsigned i;
++#endif
+ 
+ 	if (unlikely(rsp->tag & SRP_TAG_TSK_MGMT)) {
+ 		spin_lock_irqsave(&ch->lock, flags);
+@@ -2134,6 +2205,7 @@ static void srp_process_rsp(struct srp_r
+ 		}
+ 		spin_unlock_irqrestore(&ch->lock, flags);
+ 	} else {
++#ifdef HAVE_BLK_TAGS
+ 		scmnd = scsi_host_find_tag(target->scsi_host, rsp->tag);
+ 		if (scmnd && scmnd->host_scribble) {
+ 			req = (void *)scmnd->host_scribble;
+@@ -2141,6 +2213,18 @@ static void srp_process_rsp(struct srp_r
+ 		} else {
+ 			scmnd = NULL;
+ 		}
++#else
++		if (srp_tag_ch(rsp->tag) != ch - target->ch)
++			pr_err("Channel idx mismatch: tag %#llx <> ch %#lx\n",
++				rsp->tag, ch - target->ch);
++		i = srp_tag_idx(rsp->tag);
++		if (i < target->req_ring_size) {
++			req = &ch->req_ring[i];
++			scmnd = srp_claim_req(ch, req, NULL, NULL);
++		} else {
++			scmnd = NULL;
++		}
++#endif
+ 		if (!scmnd) {
+ 			shost_printk(KERN_ERR, target->scsi_host,
+ 				     "Null scmnd for RSP w/tag %#016llx received on ch %td / QP %#x\n",
+@@ -2236,9 +2320,10 @@ static void srp_process_aer_req(struct s
+ 		.tag = req->tag,
+ 	};
+ 	s32 delta = be32_to_cpu(req->req_lim_delta);
++	uint64_t lun = scsilun_to_int(&req->lun);
+ 
+ 	shost_printk(KERN_ERR, target->scsi_host, PFX
+-		     "ignoring AER for LUN %llu\n", scsilun_to_int(&req->lun));
++		     "ignoring AER for LUN %llu\n", lun);
+ 
+ 	if (srp_response_common(ch, delta, &rsp, sizeof(rsp)))
+ 		shost_printk(KERN_ERR, target->scsi_host, PFX
+@@ -2337,7 +2422,57 @@ static void srp_handle_qp_err(struct ib_
+ 	target->qp_in_error = true;
+ }
+ 
+-static int srp_queuecommand(struct Scsi_Host *shost, struct scsi_cmnd *scmnd)
++#ifndef HAVE_BLK_TAGS
++static struct srp_rdma_ch *srp_map_cpu_to_ch(struct srp_target_port *target)
++{
++	return &target->ch[target->mq_map[raw_smp_processor_id()]];
++}
++#endif
++
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 36)
++/*
++ * Kernel with host lock push-down patch. See also upstream commit
++ * f281233d3eba15fb225d21ae2e228fd4553d824a.
++ */
++#define SRP_QUEUECOMMAND srp_queuecommand
++#elif defined(RHEL_MAJOR) && RHEL_MAJOR -0 == 6 && RHEL_MINOR -0 >= 2
++/*
++ * Kernel with lockless SCSI command dispatching enabled.
++ * See also the RHEL 6.2 release notes (http://access.redhat.com/knowledge/docs/en-US/Red_Hat_Enterprise_Linux/6/html-single/6.2_Release_Notes/index.html).
++ */
++static int srp_queuecommand_wrk(struct Scsi_Host *shost,
++				struct scsi_cmnd *scmnd);
++static int srp_queuecommand(struct scsi_cmnd *scmnd,
++			    void (*done)(struct scsi_cmnd *))
++{
++	scmnd->scsi_done = done;
++	return srp_queuecommand_wrk(scmnd->device->host, scmnd);
++}
++#define SRP_QUEUECOMMAND srp_queuecommand_wrk
++#else
++/*
++ * Kernel that invokes srp_queuecommand with the SCSI host lock held.
++ */
++static int srp_queuecommand_wrk(struct Scsi_Host *shost,
++				struct scsi_cmnd *scmnd);
++static int srp_queuecommand(struct scsi_cmnd *scmnd,
++			    void (*done)(struct scsi_cmnd *))
++{
++	struct Scsi_Host *shost = scmnd->device->host;
++	int res;
++
++	spin_unlock_irq(shost->host_lock);
++
++	scmnd->scsi_done = done;
++	res = srp_queuecommand_wrk(shost, scmnd);
++
++	spin_lock_irq(shost->host_lock);
++	return res;
++}
++#define SRP_QUEUECOMMAND srp_queuecommand_wrk
++#endif
++
++static int SRP_QUEUECOMMAND(struct Scsi_Host *shost, struct scsi_cmnd *scmnd)
+ {
+ 	struct srp_target_port *target = host_to_target(shost);
+ 	struct srp_rport *rport = target->rport;
+@@ -2348,7 +2483,9 @@ static int srp_queuecommand(struct Scsi_
+ 	struct ib_device *dev;
+ 	unsigned long flags;
+ 	u32 tag;
++#ifdef HAVE_BLK_TAGS
+ 	u16 idx;
++#endif
+ 	int len, ret;
+ 	const bool in_scsi_eh = !in_interrupt() && current == shost->ehandler;
+ 
+@@ -2365,6 +2502,7 @@ static int srp_queuecommand(struct Scsi_
+ 	if (unlikely(scmnd->result))
+ 		goto err;
+ 
++#ifdef HAVE_BLK_TAGS
+ 	WARN_ON_ONCE(scmnd->request->tag < 0);
+ 	tag = blk_mq_unique_tag(scmnd->request);
+ 	ch = &target->ch[blk_mq_unique_tag_to_hwq(tag)];
+@@ -2372,15 +2510,28 @@ static int srp_queuecommand(struct Scsi_
+ 	WARN_ONCE(idx >= target->req_ring_size, "%s: tag %#x: idx %d >= %d\n",
+ 		  dev_name(&shost->shost_gendev), tag, idx,
+ 		  target->req_ring_size);
++#else
++	ch = srp_map_cpu_to_ch(target);
++#endif
+ 
+ 	spin_lock_irqsave(&ch->lock, flags);
+ 	iu = __srp_get_tx_iu(ch, SRP_IU_CMD);
++#ifdef HAVE_BLK_TAGS
+ 	spin_unlock_irqrestore(&ch->lock, flags);
+ 
+ 	if (!iu)
+ 		goto err;
+ 
+ 	req = &ch->req_ring[idx];
++#else
++	if (!iu)
++		goto err_unlock;
++
++	req = list_first_entry(&ch->free_reqs, struct srp_request, list);
++	list_del(&req->list);
++	tag = req->tag;
++	spin_unlock_irqrestore(&ch->lock, flags);
++#endif
+ 	dev = target->srp_host->srp_dev->dev;
+ 	ib_dma_sync_single_for_cpu(dev, iu->dma, ch->max_it_iu_len,
+ 				   DMA_TO_DEVICE);
+@@ -2448,6 +2599,14 @@ err_iu:
+ 	 */
+ 	req->scmnd = NULL;
+ 
++#ifndef HAVE_BLK_TAGS
++	spin_lock_irqsave(&ch->lock, flags);
++	list_add(&req->list, &ch->free_reqs);
++
++err_unlock:
++	spin_unlock_irqrestore(&ch->lock, flags);
++
++#endif
+ err:
+ 	if (scmnd->result) {
+ 		scmnd->scsi_done(scmnd);
+@@ -2908,6 +3067,30 @@ static int srp_rdma_cm_handler(struct rd
+ 	return 0;
+ }
+ 
++#ifdef HAVE_SCSI_HOST_TEMPLATE_CHANGE_QUEUE_TYPE
++/**
++ * srp_change_queue_type - changing device queue tag type
++ * @sdev: scsi device struct
++ * @tag_type: requested tag type
++ *
++ * Returns queue tag type.
++ */
++static int
++srp_change_queue_type(struct scsi_device *sdev, int tag_type)
++{
++	if (sdev->tagged_supported) {
++		scsi_set_tag_type(sdev, tag_type);
++		if (tag_type)
++			scsi_activate_tcq(sdev, sdev->queue_depth);
++		else
++			scsi_deactivate_tcq(sdev, sdev->queue_depth);
++	} else
++		tag_type = 0;
++
++	return tag_type;
++}
++#endif
++
+ /**
+  * srp_change_queue_depth - setting device queue depth
+  * @sdev: scsi device struct
+@@ -2915,13 +3098,40 @@ static int srp_rdma_cm_handler(struct rd
+  *
+  * Returns queue depth.
+  */
++#ifdef HAVE_SCSI_HOST_TEMPLATE_TRACK_QUEUE_DEPTH
+ static int
+ srp_change_queue_depth(struct scsi_device *sdev, int qdepth)
+ {
+ 	if (!sdev->tagged_supported)
+ 		qdepth = 1;
++#ifdef HAVE_SCSI_CHANGE_QUEUE_DEPTH
+ 	return scsi_change_queue_depth(sdev, qdepth);
++#else
++	scsi_adjust_queue_depth(sdev, qdepth);
++	return sdev->queue_depth;
++#endif //HAVE_SCSI_CHANGE_QUEUE_DEPTH
+ }
++#else
++static int
++srp_change_queue_depth(struct scsi_device *sdev, int qdepth, int reason)
++{
++	struct Scsi_Host *shost = sdev->host;
++	int max_depth;
++	if (reason == SCSI_QDEPTH_DEFAULT || reason == SCSI_QDEPTH_RAMP_UP) {
++		max_depth = shost->can_queue;
++		if (!sdev->tagged_supported)
++			max_depth = 1;
++		if (qdepth > max_depth)
++			qdepth = max_depth;
++		scsi_adjust_queue_depth(sdev, scsi_get_tag_type(sdev), qdepth);
++	} else if (reason == SCSI_QDEPTH_QFULL)
++		scsi_track_queue_full(sdev, qdepth);
++	else
++		return -EOPNOTSUPP;
++
++	return sdev->queue_depth;
++}
++#endif //HAVE_SCSI_HOST_TEMPLATE_TRACK_QUEUE_DEPTH
+ 
+ static int srp_send_tsk_mgmt(struct srp_rdma_ch *ch, u64 req_tag, u64 lun,
+ 			     u8 func, u8 *status)
+@@ -3002,8 +3212,13 @@ static int srp_abort(struct scsi_cmnd *s
+ 
+ 	if (!req)
+ 		return SUCCESS;
++#ifdef HAVE_BLK_TAGS
+ 	tag = blk_mq_unique_tag(scmnd->request);
+ 	ch_idx = blk_mq_unique_tag_to_hwq(tag);
++#else
++	tag = req->tag;
++	ch_idx = srp_tag_ch(tag);
++#endif
+ 	if (WARN_ON_ONCE(ch_idx >= target->ch_count))
+ 		return SUCCESS;
+ 	ch = &target->ch[ch_idx];
+@@ -3064,6 +3279,7 @@ static int srp_target_alloc(struct scsi_
+ 	return 0;
+ }
+ 
++#ifdef USE_SLAVE_ALLOC_HANDLER
+ static int srp_slave_alloc(struct scsi_device *sdev)
+ {
+ 	struct Scsi_Host *shost = sdev->host;
+@@ -3075,6 +3291,7 @@ static int srp_slave_alloc(struct scsi_d
+ 
+ 	return 0;
+ }
++#endif
+ 
+ static int srp_slave_configure(struct scsi_device *sdev)
+ {
+@@ -3278,11 +3495,19 @@ static struct scsi_host_template srp_tem
+ 	.name				= "InfiniBand SRP initiator",
+ 	.proc_name			= DRV_NAME,
+ 	.target_alloc			= srp_target_alloc,
++#ifdef USE_SLAVE_ALLOC_HANDLER
+ 	.slave_alloc			= srp_slave_alloc,
++#endif
+ 	.slave_configure		= srp_slave_configure,
+ 	.info				= srp_target_info,
++#ifdef HAVE_SCSI_HOST_TEMPLATE_LOCKLESS
++	.lockless                       = true,
++#endif
+ 	.queuecommand			= srp_queuecommand,
+ 	.change_queue_depth             = srp_change_queue_depth,
++#ifdef HAVE_SCSI_HOST_TEMPLATE_CHANGE_QUEUE_TYPE
++	.change_queue_type		= srp_change_queue_type,
++#endif
+ 	.eh_timed_out			= srp_timed_out,
+ 	.eh_abort_handler		= srp_abort,
+ 	.eh_device_reset_handler	= srp_reset_device,
+@@ -3292,8 +3517,19 @@ static struct scsi_host_template srp_tem
+ 	.can_queue			= SRP_DEFAULT_CMD_SQ_SIZE,
+ 	.this_id			= -1,
+ 	.cmd_per_lun			= SRP_DEFAULT_CMD_SQ_SIZE,
++#ifdef ENABLE_CLUSTERING
++	.use_clustering			= ENABLE_CLUSTERING,
++#endif
+ 	.shost_attrs			= srp_host_attrs,
++#ifdef HAVE_SCSI_HOST_TEMPLATE_USE_HOST_WIDE_TAGS
++	.use_host_wide_tags		= 1,
++#endif
++#ifdef HAVE_SCSI_HOST_TEMPLATE_USE_BLK_TAGS
++	.use_blk_tags			= 1,
++#endif
++#ifdef HAVE_SCSI_HOST_TEMPLATE_TRACK_QUEUE_DEPTH
+ 	.track_queue_depth		= 1,
++#endif
+ };
+ 
+ static int srp_sdev_count(struct Scsi_Host *host)
+@@ -3342,8 +3578,13 @@ static int srp_add_target(struct srp_hos
+ 	list_add_tail(&target->list, &host->target_list);
+ 	spin_unlock(&host->target_lock);
+ 
++#ifdef HAVE_SCSI_SCAN_INITIAL
+ 	scsi_scan_target(&target->scsi_host->shost_gendev,
+ 			 0, target->scsi_id, SCAN_WILD_CARD, SCSI_SCAN_INITIAL);
++#else
++        scsi_scan_target(&target->scsi_host->shost_gendev,
++                         0, target->scsi_id, SCAN_WILD_CARD, 0);
++#endif
+ 
+ 	if (srp_connected_ch(target) < target->ch_count ||
+ 	    target->qp_in_error) {
+@@ -3477,6 +3718,7 @@ static const match_table_t srp_opt_token
+ 	{ SRP_OPT_ERR,			NULL 			}
+ };
+ 
++#ifdef HAVE_INET_PTON_WITH_SCOPE
+ /**
+  * srp_parse_in - parse an IP address and port number combination
+  * @net:	   [in]  Network namespace.
+@@ -3513,12 +3755,32 @@ static int srp_parse_in(struct net *net,
+ 	pr_debug("%s -> %pISpfsc\n", addr_port_str, sa);
+ 	return ret;
+ }
++#else
++static bool srp_parse_in(struct sockaddr_in *ip4, const char *p)
++{
++	const char *dst_port_str = NULL;
++	u16 dst_port;
++
++	if (in4_pton(p, -1, (u8 *)&ip4->sin_addr, ':', &dst_port_str)) {
++		if (sscanf(dst_port_str, ":%hu", &dst_port) < 1)
++			return false;
++		ip4->sin_family = AF_INET;
++		ip4->sin_port = htons(dst_port);
++	} else {
++		return false;
++	}
++	return true;
++}
++#endif /* HAVE_INET_PTON_WITH_SCOPE */
+ 
+ static int srp_parse_options(struct net *net, const char *buf,
+ 			     struct srp_target_port *target)
+ {
+ 	char *options, *sep_opt;
+ 	char *p;
++#ifndef HAVE_HEX2BIN_NOT_VOID
++	char dgid[3];
++#endif
+ 	substring_t args[MAX_OPT_ARGS];
+ 	unsigned long long ull;
+ 	int opt_mask = 0;
+@@ -3582,11 +3844,24 @@ static int srp_parse_options(struct net
+ 				kfree(p);
+ 				goto out;
+ 			}
+-
++#ifdef HAVE_HEX2BIN_NOT_VOID
+ 			ret = hex2bin(target->ib_cm.orig_dgid.raw, p, 16);
++#else
++			for (i = 0; i < 16; ++i) {
++				strlcpy(dgid, p + i * 2, sizeof(dgid));
++				if (sscanf(dgid, "%hhx",
++					   &target->ib_cm.orig_dgid.raw[i]) < 1) {
++					ret = -EINVAL;
++					kfree(p);
++					goto out;
++				}
++			}
++#endif
+ 			kfree(p);
++#ifdef HAVE_HEX2BIN_NOT_VOID
+ 			if (ret < 0)
+ 				goto out;
++#endif
+ 			break;
+ 
+ 		case SRP_OPT_PKEY:
+@@ -3619,8 +3894,16 @@ static int srp_parse_options(struct net
+ 				ret = -ENOMEM;
+ 				goto out;
+ 			}
++#ifdef HAVE_INET_PTON_WITH_SCOPE
+ 			ret = srp_parse_in(net, &target->rdma_cm.src.ss, p);
+ 			if (ret < 0) {
++#else
++			if (in4_pton(p, -1,
++				     (u8 *)&target->rdma_cm.src.ip4.sin_addr,
++				     -1, NULL)) {
++				target->rdma_cm.src.ip4.sin_family = AF_INET;
++			} else {
++#endif
+ 				pr_warn("bad source parameter '%s'\n", p);
+ 				kfree(p);
+ 				goto out;
+@@ -3635,7 +3918,11 @@ static int srp_parse_options(struct net
+ 				ret = -ENOMEM;
+ 				goto out;
+ 			}
++#ifdef HAVE_INET_PTON_WITH_SCOPE
+ 			ret = srp_parse_in(net, &target->rdma_cm.dst.ss, p);
++#else
++			ret = srp_parse_in(&target->rdma_cm.dst.ip4, p);
++#endif
+ 			if (ret < 0) {
+ 				pr_warn("bad dest parameter '%s'\n", p);
+ 				kfree(p);
+@@ -3732,12 +4019,21 @@ static int srp_parse_options(struct net
+ 			break;
+ 
+ 		case SRP_OPT_SG_TABLESIZE:
++#ifdef HAVE_SG_MAX_SEGMENTS
+ 			if (match_int(args, &token) || token < 1 ||
+ 					token > SG_MAX_SEGMENTS) {
+ 				pr_warn("bad max sg_tablesize parameter '%s'\n",
+ 					p);
+ 				goto out;
+ 			}
++#else
++			if (match_int(args, &token) || token < 1 ||
++					token > SCSI_MAX_SG_CHAIN_SEGMENTS) {
++				pr_warn("bad max sg_tablesize parameter '%s'\n",
++					p);
++				goto out;
++			}
++#endif
+ 			target->sg_tablesize = token;
+ 			break;
+ 
+@@ -3797,7 +4093,11 @@ static ssize_t srp_create_target(struct
+ 	struct srp_device *srp_dev = host->srp_dev;
+ 	struct ib_device *ibdev = srp_dev->dev;
+ 	int ret, node_idx, node, cpu, i;
++#ifdef HAVE_VIRT_BOUNDARY
+ 	unsigned int max_sectors_per_mr, mr_per_cmd = 0;
++#else
++	unsigned int mr_per_cmd = 0;
++#endif
+ 	bool multich = false;
+ 	uint32_t max_iu_len;
+ 
+@@ -3811,18 +4111,40 @@ static ssize_t srp_create_target(struct
+ 	target_host->max_id      = 1;
+ 	target_host->max_lun     = -1LL;
+ 	target_host->max_cmd_len = sizeof ((struct srp_cmd *) (void *) 0L)->cdb;
++#ifdef HAVE_SCSI_HOST_MAX_SEGMENT_SIZE
+ 	target_host->max_segment_size = ib_dma_max_seg_size(ibdev);
++#endif
+ 
+ 	target = host_to_target(target_host);
+-
++#ifdef HAVE_KOBJ_NS_GRAB_CURRENT_EXPORTED
+ 	target->net		= kobj_ns_grab_current(KOBJ_NS_TYPE_NET);
++#else
++	target->net		= &init_net;
++#endif
+ 	target->io_class	= SRP_REV16A_IB_IO_CLASS;
+ 	target->scsi_host	= target_host;
+ 	target->srp_host	= host;
+ 	target->lkey		= host->srp_dev->pd->local_dma_lkey;
+ 	target->global_rkey	= host->srp_dev->global_rkey;
+ 	target->cmd_sg_cnt	= cmd_sg_entries;
++#ifndef HAVE_VIRT_BOUNDARY
++	if (never_register) {
++		target->sg_tablesize = indirect_sg_entries ? : cmd_sg_entries;
++	} else {
++		if (target->cmd_sg_cnt > 12) {
++			target->cmd_sg_cnt = 12;
++			pr_warn("Clamping cmd_sg_entries and "
++				"indirect_sg_entries to 12. Because %s is "
++				"not supported MR with gaps. And values more "
++				"than 12 can cause allocation errors of the "
++				"MR pool.\n",
++				dev_name(&ibdev->dev));
++		}
++		target->sg_tablesize = target->cmd_sg_cnt;
++	}
++#else
+ 	target->sg_tablesize	= indirect_sg_entries ? : cmd_sg_entries;
++#endif
+ 	target->allow_ext_sg	= allow_ext_sg;
+ 	target->tl_retry_count	= 7;
+ 	target->queue_size	= SRP_DEFAULT_QUEUE_SIZE;
+@@ -3841,6 +4163,12 @@ static ssize_t srp_create_target(struct
+ 	if (ret)
+ 		goto out;
+ 
++#ifdef HAVE_SCSI_HOST_TEMPLATE_USE_BLK_TAGS
++	ret = scsi_init_shared_tag_map(target_host, target_host->can_queue);
++	if (ret)
++		goto out;
++#endif
++
+ 	target->req_ring_size = target->queue_size - SRP_TSK_MGMT_SQ_SIZE;
+ 
+ 	if (!srp_conn_unique(target->srp_host, target)) {
+@@ -3868,6 +4196,7 @@ static ssize_t srp_create_target(struct
+ 	}
+ 
+ 	if (srp_dev->use_fast_reg || srp_dev->use_fmr) {
++#ifdef HAVE_VIRT_BOUNDARY
+ 		max_sectors_per_mr = srp_dev->max_pages_per_mr <<
+ 				  (ilog2(srp_dev->mr_page_size) - 9);
+ 
+@@ -3891,6 +4220,13 @@ static ssize_t srp_create_target(struct
+ 		pr_debug("max_sectors = %u; max_pages_per_mr = %u; mr_page_size = %u; max_sectors_per_mr = %u; mr_per_cmd = %u\n",
+ 			 target->scsi_host->max_sectors, srp_dev->max_pages_per_mr, srp_dev->mr_page_size,
+ 			 max_sectors_per_mr, mr_per_cmd);
++#else
++		mr_per_cmd = target->cmd_sg_cnt + register_always;
++
++		pr_debug("max_sectors = %u; max_pages_per_mr = %u; mr_page_size = %u; mr_per_cmd = %u\n",
++			 target->scsi_host->max_sectors, srp_dev->max_pages_per_mr, srp_dev->mr_page_size,
++			 mr_per_cmd);
++#endif
+ 	}
+ 
+ 	target_host->sg_tablesize = target->sg_tablesize;
+@@ -3918,6 +4254,12 @@ static ssize_t srp_create_target(struct
+ 	if (!target->ch)
+ 		goto out;
+ 
++#ifndef HAVE_BLK_TAGS
++	target->mq_map = kcalloc(nr_cpu_ids, sizeof(*target->mq_map),
++				 GFP_KERNEL);
++	if (!target->mq_map)
++		goto err_free_ch;
++#endif
+ 	node_idx = 0;
+ 	for_each_online_node(node) {
+ 		const int ch_start = (node_idx * target->ch_count /
+@@ -3933,6 +4275,10 @@ static ssize_t srp_create_target(struct
+ 		for_each_online_cpu(cpu) {
+ 			if (cpu_to_node(cpu) != node)
+ 				continue;
++#ifndef HAVE_BLK_TAGS
++			target->mq_map[cpu] = ch_start == ch_end ? ch_start :
++				ch_start + cpu_idx % (ch_end - ch_start);
++#endif
+ 			if (ch_start + cpu_idx >= ch_end)
+ 				continue;
+ 			ch = &target->ch[ch_start + cpu_idx];
+@@ -3972,6 +4318,9 @@ static ssize_t srp_create_target(struct
+ 				} else {
+ 					srp_free_ch_ib(target, ch);
+ 					srp_free_req_data(target, ch);
++#ifndef HAVE_BLK_TAGS
++					target->mq_map[cpu] = 0;
++#endif
+ 					target->ch_count = ch - target->ch;
+ 					goto connected;
+ 				}
+@@ -3984,7 +4333,9 @@ static ssize_t srp_create_target(struct
+ 	}
+ 
+ connected:
++#ifdef HAVE_SCSI_HOST_NR_HW_QUEUES
+ 	target->scsi_host->nr_hw_queues = target->ch_count;
++#endif
+ 
+ 	ret = srp_add_target(host, target);
+ 	if (ret)
+@@ -4017,6 +4368,7 @@ out:
+ put:
+ 	scsi_host_put(target->scsi_host);
+ 	if (ret < 0) {
++#ifdef HAVE_KOBJ_NS_GRAB_CURRENT_EXPORTED
+ 		/*
+ 		 * If a call to srp_remove_target() has not been scheduled,
+ 		 * drop the network namespace reference now that was obtained
+@@ -4024,6 +4376,7 @@ put:
+ 		 */
+ 		if (target->state != SRP_TARGET_REMOVED)
+ 			kobj_ns_drop(KOBJ_NS_TYPE_NET, target->net);
++#endif
+ 		scsi_host_put(target->scsi_host);
+ 	}
+ 
+@@ -4039,6 +4392,11 @@ free_ch:
+ 		srp_free_req_data(target, ch);
+ 	}
+ 
++#ifndef HAVE_BLK_TAGS
++	kfree(target->mq_map);
++
++err_free_ch:
++#endif
+ 	kfree(target->ch);
+ 	goto out;
+ }
+@@ -4287,11 +4645,19 @@ static int __init srp_init_module(void)
+ 		indirect_sg_entries = cmd_sg_entries;
+ 	}
+ 
++#ifdef HAVE_SG_MAX_SEGMENTS
+ 	if (indirect_sg_entries > SG_MAX_SEGMENTS) {
+ 		pr_warn("Clamping indirect_sg_entries to %u\n",
+ 			SG_MAX_SEGMENTS);
+ 		indirect_sg_entries = SG_MAX_SEGMENTS;
+ 	}
++#else
++	if (indirect_sg_entries > SCSI_MAX_SG_CHAIN_SEGMENTS) {
++		pr_warn("Clamping indirect_sg_entries to %u\n",
++			SCSI_MAX_SG_CHAIN_SEGMENTS);
++		indirect_sg_entries = SCSI_MAX_SG_CHAIN_SEGMENTS;
++	}
++#endif
+ 
+ 	srp_remove_wq = create_workqueue("srp_remove");
+ 	if (!srp_remove_wq) {

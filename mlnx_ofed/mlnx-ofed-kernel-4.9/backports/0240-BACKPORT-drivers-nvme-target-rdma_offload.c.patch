@@ -1,0 +1,61 @@
+From: Israel Rukshin <israelr@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/nvme/target/rdma_offload.c
+
+Change-Id: I3c358826e118772359fa442e76acbcec59526294
+---
+ drivers/nvme/target/rdma_offload.c | 23 +++++++++++++++++++++++
+ 1 file changed, 23 insertions(+)
+
+--- a/drivers/nvme/target/rdma_offload.c
++++ b/drivers/nvme/target/rdma_offload.c
+@@ -16,6 +16,10 @@
+  */
+ 
+ #include "rdma_offload.h"
++#if defined(CONFIG_PPC) && defined(HAVE_PNV_PCI_SET_P2P)
++#include <asm/pnv-pci.h>
++#endif
++#include <linux/sizes.h>
+ 
+ static unsigned int
+ __nvmet_rdma_peer_to_peer_sqe_inline_size(struct ib_nvmf_caps *nvmf_caps,
+@@ -348,6 +352,11 @@ static u16 nvmet_rdma_install_offload_qu
+ 
+ static void nvmet_rdma_free_be_ctrl(struct nvmet_rdma_backend_ctrl *be_ctrl)
+ {
++#if defined(CONFIG_PPC) && defined(HAVE_PNV_PCI_SET_P2P)
++	pnv_pci_set_p2p(container_of(be_ctrl->xrq->ndev->device->dev.parent,
++				     struct pci_dev, dev),
++			be_ctrl->pdev, OPAL_PCI_P2P_STORE);
++#endif
+ 	lockdep_assert_held(&be_ctrl->xrq->be_mutex);
+ 	list_del_init(&be_ctrl->entry);
+ 	be_ctrl->xrq->nr_be_ctrls--;
+@@ -487,6 +496,15 @@ nvmet_rdma_create_be_ctrl(struct nvmet_r
+ 	}
+ 	mutex_unlock(&xrq->be_mutex);
+ 
++#if defined(CONFIG_PPC) && defined(HAVE_PNV_PCI_SET_P2P)
++	err = pnv_pci_set_p2p(container_of(xrq->ndev->device->dev.parent,
++					   struct pci_dev, dev),
++			      ns->pdev,
++			      OPAL_PCI_P2P_STORE | OPAL_PCI_P2P_ENABLE);
++	if (err)
++		return ERR_PTR(err);
++#endif
++
+ 	be_ctrl = kzalloc(sizeof(*be_ctrl), GFP_KERNEL);
+ 	if (!be_ctrl) {
+ 		err = -ENOMEM;
+@@ -560,6 +578,11 @@ out_free_be_ctrl:
+ 	kref_put(&xrq->ref, nvmet_rdma_destroy_xrq);
+ 	kfree(be_ctrl);
+ out_err:
++#if defined(CONFIG_PPC) && defined(HAVE_PNV_PCI_SET_P2P)
++	pnv_pci_set_p2p(container_of(xrq->ndev->device->dev.parent,
++				     struct pci_dev, dev),
++			ns->pdev, OPAL_PCI_P2P_STORE);
++#endif
+ 	return ERR_PTR(err);
+ }
+ 

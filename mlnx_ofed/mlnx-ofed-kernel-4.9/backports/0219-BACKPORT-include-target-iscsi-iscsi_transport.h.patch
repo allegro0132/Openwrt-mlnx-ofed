@@ -1,0 +1,93 @@
+From: Sergey Gorenko <sergeygo@mellanox.com>
+Subject: [PATCH] BACKPORT: include/target/iscsi/iscsi_transport.h
+
+Change-Id: Ic94520dd370ec76d8217dfcacf5e77ff9f514e28
+---
+ include/target/iscsi/iscsi_transport.h | 21 ++++++++++++++++++++-
+ 1 file changed, 20 insertions(+), 1 deletion(-)
+
+--- a/include/target/iscsi/iscsi_transport.h
++++ b/include/target/iscsi/iscsi_transport.h
+@@ -15,14 +15,21 @@ struct iscsit_transport {
+ #define ISCSIT_TRANSPORT_NAME	16
+ 	char name[ISCSIT_TRANSPORT_NAME];
+ 	int transport_type;
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,12,0))
+ 	int priv_size;
++#endif
+ 	struct module *owner;
+ 	struct list_head t_node;
+ 	int (*iscsit_setup_np)(struct iscsi_np *, struct __kernel_sockaddr_storage *);
+ 	int (*iscsit_accept_np)(struct iscsi_np *, struct iscsi_conn *);
+ 	void (*iscsit_free_np)(struct iscsi_np *);
++#if defined(CONFIG_COMPAT_ISCSIT_WAIT_CONN)
+ 	void (*iscsit_wait_conn)(struct iscsi_conn *);
++#endif
+ 	void (*iscsit_free_conn)(struct iscsi_conn *);
++#if !defined(CONFIG_COMPAT_RHEL_7_2) && (LINUX_VERSION_CODE < KERNEL_VERSION(3,12,0))
++	struct iscsi_cmd *(*iscsit_alloc_cmd)(struct iscsi_conn *, gfp_t);
++#endif
+ 	int (*iscsit_get_login_rx)(struct iscsi_conn *, struct iscsi_login *);
+ 	int (*iscsit_put_login_tx)(struct iscsi_conn *, struct iscsi_login *, u32);
+ 	int (*iscsit_immediate_queue)(struct iscsi_conn *, struct iscsi_cmd *, int);
+@@ -34,10 +41,12 @@ struct iscsit_transport {
+ 	enum target_prot_op (*iscsit_get_sup_prot_ops)(struct iscsi_conn *);
+ };
+ 
++#if defined(CONFIG_COMPAT_RHEL_7_2) || (LINUX_VERSION_CODE >= KERNEL_VERSION(3,12,0))
+ static inline void *iscsit_priv_cmd(struct iscsi_cmd *cmd)
+ {
+ 	return (void *)(cmd + 1);
+ }
++#endif
+ 
+ /*
+  * From iscsi_target_transport.c
+@@ -60,27 +69,36 @@ extern int iscsit_check_dataout_hdr(stru
+ 				struct iscsi_cmd **);
+ extern int iscsit_check_dataout_payload(struct iscsi_cmd *, struct iscsi_data *,
+ 				bool);
++#if !defined(CONFIG_COMPAT_RHEL_7_1) && (LINUX_VERSION_CODE < KERNEL_VERSION(3,11,0))
++extern int iscsit_handle_nop_out(struct iscsi_conn *, struct iscsi_cmd *,
++                               unsigned char *);
++#else
+ extern int iscsit_setup_nop_out(struct iscsi_conn *, struct iscsi_cmd *,
+ 				struct iscsi_nopout *);
+ extern int iscsit_process_nop_out(struct iscsi_conn *, struct iscsi_cmd *,
+ 				struct iscsi_nopout *);
++#endif
+ extern int iscsit_handle_logout_cmd(struct iscsi_conn *, struct iscsi_cmd *,
+ 				unsigned char *);
+ extern int iscsit_handle_task_mgt_cmd(struct iscsi_conn *, struct iscsi_cmd *,
+ 				unsigned char *);
++#if defined(CONFIG_COMPAT_RHEL_7_1) || (LINUX_VERSION_CODE >= KERNEL_VERSION(3,11,0))
+ extern int iscsit_setup_text_cmd(struct iscsi_conn *, struct iscsi_cmd *,
+ 				 struct iscsi_text *);
+ extern int iscsit_process_text_cmd(struct iscsi_conn *, struct iscsi_cmd *,
+ 				   struct iscsi_text *);
++#endif
+ extern void iscsit_build_rsp_pdu(struct iscsi_cmd *, struct iscsi_conn *,
+ 				bool, struct iscsi_scsi_rsp *);
+ extern void iscsit_build_nopin_rsp(struct iscsi_cmd *, struct iscsi_conn *,
+ 				struct iscsi_nopin *, bool);
+ extern void iscsit_build_task_mgt_rsp(struct iscsi_cmd *, struct iscsi_conn *,
+ 				struct iscsi_tm_rsp *);
++#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,11,0))
+ extern int iscsit_build_text_rsp(struct iscsi_cmd *, struct iscsi_conn *,
+ 				struct iscsi_text_rsp *,
+ 				enum iscsit_transport_type);
++#endif
+ extern void iscsit_build_reject(struct iscsi_cmd *, struct iscsi_conn *,
+ 				struct iscsi_reject *);
+ extern int iscsit_build_logout_rsp(struct iscsi_cmd *, struct iscsi_conn *,
+@@ -110,8 +128,9 @@ extern int iscsit_tmr_post_handler(struc
+ extern struct iscsi_cmd *iscsit_allocate_cmd(struct iscsi_conn *, int);
+ extern int iscsit_sequence_cmd(struct iscsi_conn *, struct iscsi_cmd *,
+ 			       unsigned char *, __be32);
++#if defined(CONFIG_COMPAT_RHEL_7_2) || (LINUX_VERSION_CODE >= KERNEL_VERSION(3,12,0))
+ extern void iscsit_release_cmd(struct iscsi_cmd *);
+-
++#endif
+ #endif /* HAVE_ISCSI_TARGET_CORE_ISCSI_TARGET_STAT_H */
+ 
+ #endif	/* _COMPAT_TARGET_ISCSI_ISCSI_TRANSPORT_H */

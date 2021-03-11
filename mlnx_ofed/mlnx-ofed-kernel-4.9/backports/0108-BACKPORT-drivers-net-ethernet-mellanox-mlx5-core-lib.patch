@@ -1,0 +1,27 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx5/core/lib/mpfs.h
+
+Change-Id: Idd4398ee659ec49ace2c6aa991377da62cf80917
+---
+ drivers/net/ethernet/mellanox/mlx5/core/lib/mpfs.h | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/lib/mpfs.h
++++ b/drivers/net/ethernet/mellanox/mlx5/core/lib/mpfs.h
+@@ -47,14 +47,14 @@ struct l2addr_node {
+ 
+ #define for_each_l2hash_node(hn, tmp, hash, i) \
+ 	for (i = 0; i < MLX5_L2_ADDR_HASH_SIZE; i++) \
+-		hlist_for_each_entry_safe(hn, tmp, &(hash)[i], hlist)
++		compat_hlist_for_each_entry_safe(hn, tmp, &hash[i], hlist)
+ 
+ #define l2addr_hash_find(hash, mac, type) ({                \
+ 	int ix = MLX5_L2_ADDR_HASH(mac);                    \
+ 	bool found = false;                                 \
+ 	type *ptr = NULL;                                   \
+ 							    \
+-	hlist_for_each_entry(ptr, &(hash)[ix], node.hlist)  \
++	compat_hlist_for_each_entry(ptr, &hash[ix], node.hlist)    \
+ 		if (ether_addr_equal(ptr->node.addr, mac)) {\
+ 			found = true;                       \
+ 			break;                              \

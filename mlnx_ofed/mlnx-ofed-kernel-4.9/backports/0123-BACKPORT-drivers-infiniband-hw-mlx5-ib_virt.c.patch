@@ -1,0 +1,75 @@
+From: Alaa Hleihel <alaa@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/hw/mlx5/ib_virt.c
+
+Change-Id: I713658cde8484b45e611b8ec370ff93503c2765e
+---
+ drivers/infiniband/hw/mlx5/ib_virt.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+--- a/drivers/infiniband/hw/mlx5/ib_virt.c
++++ b/drivers/infiniband/hw/mlx5/ib_virt.c
+@@ -29,11 +29,13 @@
+  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  * SOFTWARE.
+  */
++#ifdef HAVE_NDO_SET_VF_MAC
+ 
+ #include <linux/module.h>
+ #include <linux/mlx5/vport.h>
+ #include "mlx5_ib.h"
+ 
++#ifdef HAVE_LINKSTATE
+ static inline u32 mlx_to_net_policy(enum port_state_policy mlx_policy)
+ {
+ 	switch (mlx_policy) {
+@@ -47,6 +49,7 @@ static inline u32 mlx_to_net_policy(enum
+ 		return __IFLA_VF_LINK_STATE_MAX;
+ 	}
+ }
++#endif
+ 
+ int mlx5_ib_get_vf_config(struct ib_device *device, int vf, u8 port,
+ 			  struct ifla_vf_info *info)
+@@ -67,15 +70,18 @@ int mlx5_ib_get_vf_config(struct ib_devi
+ 		goto free;
+ 	}
+ 	memset(info, 0, sizeof(*info));
++#ifdef HAVE_LINKSTATE
+ 	info->linkstate = mlx_to_net_policy(rep->policy);
+ 	if (info->linkstate == __IFLA_VF_LINK_STATE_MAX)
+ 		err = -EINVAL;
++#endif
+ 
+ free:
+ 	kfree(rep);
+ 	return err;
+ }
+ 
++#ifdef HAVE_LINKSTATE
+ static inline enum port_state_policy net_to_mlx_policy(int policy)
+ {
+ 	switch (policy) {
+@@ -117,6 +123,7 @@ out:
+ 	kfree(in);
+ 	return err;
+ }
++#endif
+ 
+ int mlx5_ib_get_vf_stats(struct ib_device *device, int vf,
+ 			 u8 port, struct ifla_vf_stats *stats)
+@@ -149,6 +156,7 @@ ex:
+ 	return err;
+ }
+ 
++#ifdef HAVE_IFLA_VF_IB_NODE_PORT_GUID
+ static int set_vf_node_guid(struct ib_device *device, int vf, u8 port, u64 guid)
+ {
+ 	struct mlx5_ib_dev *dev = to_mdev(device);
+@@ -201,3 +209,7 @@ int mlx5_ib_set_vf_guid(struct ib_device
+ 
+ 	return -EINVAL;
+ }
++
++#endif
++
++#endif /* HAVE_NDO_SET_VF_MAC */

@@ -1,0 +1,87 @@
+#!/bin/bash
+#
+# Copyright (c) 2017 Mellanox Technologies. All rights reserved.
+#
+# This Software is licensed under one of the following licenses:
+#
+# 1) under the terms of the "Common Public License 1.0" a copy of which is
+#    available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/cpl.php.
+#
+# 2) under the terms of the "The BSD License" a copy of which is
+#    available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/bsd-license.php.
+#
+# 3) under the terms of the "GNU General Public License (GPL) Version 2" a
+#    copy of which is available from the Open Source Initiative, see
+#    http://www.opensource.org/licenses/gpl-license.php.
+#
+# Licensee has the right to choose one of the above licenses.
+#
+# Redistributions of source code must retain the above copyright
+# notice and one of the license notices.
+#
+# Redistributions in binary form must reproduce both the above copyright
+# notice, one of the license notices in the documentation
+# and/or other materials provided with the distribution.
+#
+
+remove_backports=1
+
+usage()
+{
+	echo Usage:
+	echo "    $0 <options>"
+	echo
+	echo "Options:"
+	echo "    --remove-backports               Remove the backports branch, and checkout the LINUX branch."
+}
+
+parse_args()
+{
+	while test $# -gt 0
+	do
+		arg=$1
+		shift
+		case "$arg" in
+			"--remove-backports")
+			remove_backports=1
+			;;
+			*)
+			usage
+			exit 1
+			;;
+		esac
+	done
+}
+
+############
+# main
+
+parse_args $@
+
+if [ $remove_backports -eq 0 ]; then
+	usage
+	exit 1
+fi
+
+echo
+echo "Will remove the backports branch, and checkout the original branch.."
+echo
+current_branch=`git rev-parse --abbrev-ref HEAD`
+orig_branch=`echo $current_branch | sed -e 's/backport-//'`
+branch=${orig_branch}
+make distclean
+git am --abort
+git reset --hard
+if [ "$branch" != "$current_branch" ]; then
+    git checkout $branch
+    git branch -D $current_branch
+fi
+/bin/rm -f backports_applied
+/bin/rm -f compat/configure
+/bin/rm -f compat/build/conftest.c  compat/build/modules.order  compat/build/Module.symvers compat/config.log
+/bin/rm -f compat/config/config.* compat/config/missing compat/config/install-sh  compat/aclocal.m4 compat/config/compile compat/config/ltmain.sh
+/bin/rm -rf compat/autom4te.cache compat/build/output.log compat/config.h compat/config.h.in compat/config.status compat/COPYING compat/INSTALL compat/Makefile.in
+/bin/rm -rf Makefile.xen compat/build/Makefile.xen compat/build/build_* compat/stamp-h1 compat/CONFDEFS_H_DIR
+

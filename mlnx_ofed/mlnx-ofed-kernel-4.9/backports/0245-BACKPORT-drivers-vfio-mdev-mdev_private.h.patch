@@ -1,0 +1,19 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/vfio/mdev/mdev_private.h
+
+Change-Id: I02b39f741e4bedfe06452aa26b5f7f4aec923a8c
+---
+ drivers/vfio/mdev/mdev_private.h | 2 ++
+ 1 file changed, 2 insertions(+)
+
+--- a/drivers/vfio/mdev/mdev_private.h
++++ b/drivers/vfio/mdev/mdev_private.h
+@@ -10,6 +10,8 @@
+ #ifndef MDEV_PRIVATE_H
+ #define MDEV_PRIVATE_H
+ 
++#include <linux/refcount.h>
++
+ int  mdev_bus_register(void);
+ void mdev_bus_unregister(void);
+ 

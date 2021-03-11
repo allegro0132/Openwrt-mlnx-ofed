@@ -1,0 +1,98 @@
+From: Eli Cohen <eli@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx5/core/en/tc_tun.h
+
+Change-Id: I6c8783f628e5bfe6dda4c36ba314400db4005d47
+---
+ .../net/ethernet/mellanox/mlx5/core/en/tc_tun.h    | 45 ++++++++++++++++++----
+ 1 file changed, 37 insertions(+), 8 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/en/tc_tun.h
++++ b/drivers/net/ethernet/mellanox/mlx5/core/en/tc_tun.h
+@@ -4,6 +4,8 @@
+ #ifndef __MLX5_EN_TC_TUNNEL_H__
+ #define __MLX5_EN_TC_TUNNEL_H__
+ 
++#ifdef HAVE_TCF_TUNNEL_INFO
++
+ #include <linux/netdevice.h>
+ #include <linux/mlx5/fs.h>
+ #include <net/pkt_cls.h>
+@@ -26,8 +28,12 @@ struct mlx5e_tc_tunnel {
+ 	int (*calc_hlen)(struct mlx5e_encap_entry *e);
+ 	int (*init_encap_attr)(struct net_device *tunnel_dev,
+ 			       struct mlx5e_priv *priv,
+-			       struct mlx5e_encap_entry *e,
+-			       struct netlink_ext_ack *extack);
++			       struct mlx5e_encap_entry *e
++#ifdef HAVE_TC_CLS_OFFLOAD_EXTACK
++			       , struct netlink_ext_ack *extack
++#endif
++			      );
++
+ 	int (*generate_ip_tun_hdr)(char buf[],
+ 				   __u8 *ip_proto,
+ 				   struct mlx5e_encap_entry *e);
+@@ -35,12 +41,22 @@ struct mlx5e_tc_tunnel {
+ 			       struct mlx5_flow_spec *spec,
+ 			       struct tc_cls_flower_offload *f,
+ 			       void *headers_c,
+-			       void *headers_v);
++			       void *headers_v
++#ifndef HAVE_TC_SETUP_FLOW_ACTION
++			       , struct flow_rule *rule
++#endif
++			      );
++
+ 	int (*parse_tunnel)(struct mlx5e_priv *priv,
+ 			    struct mlx5_flow_spec *spec,
+ 			    struct tc_cls_flower_offload *f,
+ 			    void *headers_c,
+-			    void *headers_v);
++			    void *headers_v
++#ifndef HAVE_TC_SETUP_FLOW_ACTION
++			    , struct flow_rule *rule
++#endif
++			   );
++
+ };
+ 
+ extern struct mlx5e_tc_tunnel vxlan_tunnel;
+@@ -51,8 +67,11 @@ struct mlx5e_tc_tunnel *mlx5e_get_tc_tun
+ 
+ int mlx5e_tc_tun_init_encap_attr(struct net_device *tunnel_dev,
+ 				 struct mlx5e_priv *priv,
+-				 struct mlx5e_encap_entry *e,
+-				 struct netlink_ext_ack *extack);
++				 struct mlx5e_encap_entry *e
++#ifdef HAVE_TC_CLS_OFFLOAD_EXTACK
++				 , struct netlink_ext_ack *extack
++#endif
++				);
+ 
+ int mlx5e_tc_tun_create_header_ipv4(struct mlx5e_priv *priv,
+ 				    struct net_device *mirred_dev,
+@@ -70,12 +89,22 @@ int mlx5e_tc_tun_parse(struct net_device
+ 		       struct mlx5_flow_spec *spec,
+ 		       struct tc_cls_flower_offload *f,
+ 		       void *headers_c,
+-		       void *headers_v, u8 *match_level);
++		       void *headers_v, u8 *match_level
++#ifndef HAVE_TC_SETUP_FLOW_ACTION
++		       , struct flow_rule *rule
++#endif
++		      );
+ 
+ int mlx5e_tc_tun_parse_udp_ports(struct mlx5e_priv *priv,
+ 				 struct mlx5_flow_spec *spec,
+ 				 struct tc_cls_flower_offload *f,
+ 				 void *headers_c,
+-				 void *headers_v);
++				 void *headers_v
++#ifndef HAVE_TC_SETUP_FLOW_ACTION
++				 , struct flow_rule *rule
++#endif
++				);
++
+ 
++#endif /* HAVE_TCF_TUNNEL_INFO */
+ #endif //__MLX5_EN_TC_TUNNEL_H__

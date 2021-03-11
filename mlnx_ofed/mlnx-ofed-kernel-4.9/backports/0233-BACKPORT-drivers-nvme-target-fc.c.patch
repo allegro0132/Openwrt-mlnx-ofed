@@ -1,0 +1,109 @@
+From: Israel Rukshin <israelr@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/nvme/target/fc.c
+
+Change-Id: I7ae7cf90872f0c0cb25dee836d930d81c67063f2
+---
+ drivers/nvme/target/fc.c | 55 ++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 55 insertions(+)
+
+--- a/drivers/nvme/target/fc.c
++++ b/drivers/nvme/target/fc.c
+@@ -2,6 +2,8 @@
+ /*
+  * Copyright (c) 2016 Avago Technologies.  All rights reserved.
+  */
++#ifdef HAVE_LINUX_NVME_FC_DRIVER_H
++
+ #ifdef pr_fmt
+ #undef pr_fmt
+ #endif
+@@ -1722,11 +1724,37 @@ nvmet_fc_alloc_tgt_pgs(struct nvmet_fc_f
+ {
+ 	struct scatterlist *sg;
+ 	unsigned int nent;
++#ifndef HAVE_SGL_ALLOC
++	struct page *page;
++	u32 page_len, length;
++	int i = 0;
++
++	length = fod->req.transfer_len;
++	nent = DIV_ROUND_UP(length, PAGE_SIZE);
++	sg = kmalloc_array(nent, sizeof(struct scatterlist), GFP_KERNEL);
++#else
+ 
+ 	sg = sgl_alloc(fod->req.transfer_len, GFP_KERNEL, &nent);
++#endif
+ 	if (!sg)
+ 		goto out;
+ 
++#ifndef HAVE_SGL_ALLOC
++	sg_init_table(sg, nent);
++
++	while (length) {
++		page_len = min_t(u32, length, PAGE_SIZE);
++
++		page = alloc_page(GFP_KERNEL);
++		if (!page)
++			goto out_free_pages;
++
++		sg_set_page(&sg[i], page, page_len, 0);
++		length -= page_len;
++		i++;
++	}
++
++#endif
+ 	fod->data_sg = sg;
+ 	fod->data_sg_cnt = nent;
+ 	fod->data_sg_cnt = fc_dma_map_sg(fod->tgtport->dev, sg, nent,
+@@ -1737,6 +1765,17 @@ nvmet_fc_alloc_tgt_pgs(struct nvmet_fc_f
+ 
+ 	return 0;
+ 
++#ifndef HAVE_SGL_ALLOC
++out_free_pages:
++	while (i > 0) {
++		i--;
++		__free_page(sg_page(&sg[i]));
++	}
++
++	kfree(sg);
++	fod->data_sg = NULL;
++	fod->data_sg_cnt = 0;
++#endif
+ out:
+ 	return NVME_SC_INTERNAL;
+ }
+@@ -1744,13 +1783,24 @@ out:
+ static void
+ nvmet_fc_free_tgt_pgs(struct nvmet_fc_fcp_iod *fod)
+ {
++#ifndef HAVE_SGL_FREE
++	struct scatterlist *sg;
++	int count;
++
++#endif
+ 	if (!fod->data_sg || !fod->data_sg_cnt)
+ 		return;
+ 
+ 	fc_dma_unmap_sg(fod->tgtport->dev, fod->data_sg, fod->data_sg_cnt,
+ 				((fod->io_dir == NVMET_FCP_WRITE) ?
+ 					DMA_FROM_DEVICE : DMA_TO_DEVICE));
++#ifdef HAVE_SGL_FREE
+ 	sgl_free(fod->data_sg);
++#else
++	for_each_sg(fod->data_sg, sg, fod->data_sg_cnt, count)
++	__free_page(sg_page(sg));
++	kfree(fod->data_sg);
++#endif
+ 	fod->data_sg = NULL;
+ 	fod->data_sg_cnt = 0;
+ }
+@@ -2582,3 +2632,8 @@ module_init(nvmet_fc_init_module);
+ module_exit(nvmet_fc_exit_module);
+ 
+ MODULE_LICENSE("GPL v2");
++#ifdef RETPOLINE_MLNX
++MODULE_INFO(retpoline, "Y");
++#endif
++
++#endif /* HAVE_LINUX_NVME_FC_DRIVER_H */

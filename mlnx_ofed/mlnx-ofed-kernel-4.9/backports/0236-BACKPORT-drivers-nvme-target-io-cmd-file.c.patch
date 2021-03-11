@@ -1,0 +1,75 @@
+From: Nitzan Carmi <nitzanc@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/nvme/target/io-cmd-file.c
+
+Change-Id: Ia0735339e09b80725da0125d7f8aeb775727d380
+---
+ drivers/nvme/target/io-cmd-file.c | 13 ++++++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+--- a/drivers/nvme/target/io-cmd-file.c
++++ b/drivers/nvme/target/io-cmd-file.c
+@@ -4,6 +4,7 @@
+  * Copyright (c) 2017-2018 Western Digital Corporation or its
+  * affiliates.
+  */
++#ifdef HAVE_FS_HAS_KIOCB
+ #ifdef pr_fmt
+ #undef pr_fmt
+ #endif
+@@ -45,9 +46,12 @@ int nvmet_file_ns_enable(struct nvmet_ns
+ 				ns->device_path, PTR_ERR(ns->file));
+ 		return PTR_ERR(ns->file);
+ 	}
+-
++#ifdef VFS_GETATTR_HAS_4_PARAMS
+ 	ret = vfs_getattr(&ns->file->f_path,
+ 			&stat, STATX_SIZE, AT_STATX_FORCE_SYNC);
++#else
++	ret = vfs_getattr(&ns->file->f_path, &stat);
++#endif
+ 	if (ret)
+ 		goto err;
+ 
+@@ -190,7 +194,9 @@ static bool nvmet_file_execute_io(struct
+ 	 * A NULL ki_complete ask for synchronous execution, which we want
+ 	 * for the IOCB_NOWAIT case.
+ 	 */
++#ifdef HAVE_IOCB_NOWAIT
+ 	if (!(ki_flags & IOCB_NOWAIT))
++#endif
+ 		req->f.iocb.ki_complete = nvmet_file_io_done;
+ 
+ 	ret = nvmet_file_submit_bvec(req, pos, bv_cnt, total_len, ki_flags);
+@@ -198,6 +204,7 @@ static bool nvmet_file_execute_io(struct
+ 	switch (ret) {
+ 	case -EIOCBQUEUED:
+ 		return true;
++#ifdef HAVE_IOCB_NOWAIT
+ 	case -EAGAIN:
+ 		if (WARN_ON_ONCE(!(ki_flags & IOCB_NOWAIT)))
+ 			goto complete;
+@@ -211,6 +218,7 @@ static bool nvmet_file_execute_io(struct
+ 		if ((ki_flags & IOCB_NOWAIT))
+ 			return false;
+ 		break;
++#endif
+ 	}
+ 
+ complete:
+@@ -254,9 +262,11 @@ static void nvmet_file_execute_rw(struct
+ 		req->f.mpool_alloc = false;
+ 
+ 	if (req->ns->buffered_io) {
++#ifdef HAVE_IOCB_NOWAIT
+ 		if (likely(!req->f.mpool_alloc) &&
+ 				nvmet_file_execute_io(req, IOCB_NOWAIT))
+ 			return;
++#endif
+ 		nvmet_file_submit_buffered_io(req);
+ 	} else
+ 		nvmet_file_execute_io(req, 0);
+@@ -396,3 +406,4 @@ u16 nvmet_file_parse_io_cmd(struct nvmet
+ 		return NVME_SC_INVALID_OPCODE | NVME_SC_DNR;
+ 	}
+ }
++#endif /* HAVE_FS_HAS_KIOCB */

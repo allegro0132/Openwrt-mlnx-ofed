@@ -1,0 +1,546 @@
+From: Feras Daoud <ferasda@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx4/mlx4_en.h
+
+Change-Id: I63d969a11f739088a018729f5a21d0dd9cb467f3
+---
+ drivers/net/ethernet/mellanox/mlx4/mlx4_en.h | 338 ++++++++++++++++++++++++++-
+ 1 file changed, 336 insertions(+), 2 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx4/mlx4_en.h
++++ b/drivers/net/ethernet/mellanox/mlx4/mlx4_en.h
+@@ -44,9 +44,15 @@
+ #ifdef CONFIG_MLX4_EN_DCB
+ #include <linux/dcbnl.h>
+ #endif
++#ifdef HAVE_NETDEV_RX_CPU_RMAP
+ #include <linux/cpu_rmap.h>
++#endif
++#if defined (HAVE_PTP_CLOCK_INFO) && (defined(CONFIG_PTP_1588_CLOCK) || defined(CONFIG_PTP_1588_CLOCK_MODULE))
+ #include <linux/ptp_clock_kernel.h>
++#endif
++#ifdef HAVE_NET_XDP_H
+ #include <net/xdp.h>
++#endif
+ 
+ #include <linux/mlx4/device.h>
+ #include <linux/mlx4/qp.h>
+@@ -54,6 +60,9 @@
+ #include <linux/mlx4/srq.h>
+ #include <linux/mlx4/doorbell.h>
+ #include <linux/mlx4/cmd.h>
++#ifdef CONFIG_COMPAT_LRO_ENABLED
++#include <linux/inet_lro.h>
++#endif
+ 
+ #include "en_port.h"
+ #include "mlx4_stats.h"
+@@ -61,6 +70,43 @@
+ #define DRV_NAME	"mlx4_en"
+ #define DRV_VERSION	"4.9-2.2.4"
+ 
++#ifndef CONFIG_COMPAT_DISABLE_DCB
++#ifdef CONFIG_MLX4_EN_DCB
++
++#ifndef HAVE_IEEE_GET_SET_MAXRATE
++#define CONFIG_SYSFS_MAXRATE
++#endif
++
++#ifndef CONFIG_COMPAT_FDB_API_EXISTS
++#define CONFIG_SYSFS_FDB
++#endif
++
++/* make sure to define QCN only when DCB is not disabled
++ * and EN_DCB is defined
++ */
++#ifndef HAVE_IEEE_GETQCN
++#define CONFIG_SYSFS_QCN
++#endif
++
++#endif
++#endif
++
++#if defined(HAVE_NETDEV_GET_NUM_TC) && defined(HAVE_NETDEV_SET_NUM_TC)
++#define CONFIG_SYSFS_MQPRIO
++#endif
++
++#if !defined(HAVE_GET_SET_RXFH) && !defined(HAVE_GET_SET_RXFH_INDIR_EXT) && !defined(HAVE_GET_SET_RXFH_INDIR)
++#define CONFIG_SYSFS_INDIR_SETTING
++#endif
++
++#if !defined(HAVE_GET_SET_CHANNELS) && !defined(HAVE_GET_SET_CHANNELS_EXT)
++#define CONFIG_SYSFS_NUM_CHANNELS
++#endif
++
++#ifndef HAVE_NDO_SET_FEATURES
++#define CONFIG_SYSFS_LOOPBACK
++#endif
++
+ #define MLX4_EN_MSG_LEVEL	(NETIF_MSG_LINK | NETIF_MSG_IFDOWN)
+ 
+ /*
+@@ -110,6 +156,13 @@
+ #define MLX4_EN_PRIV_FLAGS_FS_EN_UDP		(1 << 6)
+ #define MLX4_EN_PRIV_FLAGS_DISABLE_MC_LOOPBACK	(1 << 7)
+ #define MLX4_EN_PRIV_FLAGS_INLINE_SCATTER	(1 << 8)
++#ifndef HAVE_NETIF_F_RXFCS
++#define MLX4_EN_PRIV_FLAGS_RXFCS		(1 << 9)
++#endif
++#ifndef HAVE_NETIF_F_RXALL
++#define MLX4_EN_PRIV_FLAGS_RXALL		(1 << 10)
++#endif
++#define MLX4_EN_PRIV_FLAGS_RSS_HASH_XOR		(1 << 11)
+ 
+ #define MLX4_EN_WATCHDOG_TIMEOUT	(15 * HZ)
+ 
+@@ -117,6 +170,10 @@
+ #define MLX4_EN_ALLOC_SIZE	PAGE_ALIGN(16384)
+ 
+ #define MLX4_EN_MAX_RX_FRAGS	4
++#if !(defined(HAVE_IRQ_DESC_GET_IRQ_DATA) && defined(HAVE_IRQ_TO_DESC_EXPORTED))
++/* Minimum packet number till arming the CQ */
++#define MLX4_EN_MIN_RX_ARM	2097152
++#endif
+ 
+ /* Maximum ring sizes */
+ #define MLX4_EN_MAX_TX_SIZE	8192
+@@ -206,6 +263,14 @@
+ #define GET_AVG_PERF_COUNTER(cnt)	(0)
+ #endif /* MLX4_EN_PERF_STAT */
+ 
++#if defined(CONFIG_NET_RX_BUSY_POLL) && defined(HAVE_NDO_BUSY_POLL) && !defined(HAVE_NAPI_STATE_NO_BUSY_POLL)
++#define MLX4_EN_BUSY_POLL
++#endif
++
++#if defined(HAVE_VLAN_HWACCEL_DO_RECEIVE_SKB_PTR) && defined(HAVE_VLAN_GRO_FRAGS)
++#define MLX4_EN_VLGRP
++#endif
++
+ /* Constants for TX flow */
+ enum {
+ 	MAX_INLINE = 104, /* 128 - 16 - 4 - 4 */
+@@ -271,6 +336,16 @@ struct mlx4_en_tx_desc {
+ 	};
+ };
+ 
++#ifdef CONFIG_COMPAT_LRO_ENABLED
++/* LRO defines for MLX4_EN */
++#define MLX4_EN_LRO_MAX_DESC	32
++
++struct mlx4_en_lro {
++	struct net_lro_mgr	lro_mgr;
++	struct net_lro_desc	lro_desc[MLX4_EN_LRO_MAX_DESC];
++};
++#endif
++
+ #define MLX4_EN_USE_SRQ		0x01000000
+ 
+ #define MLX4_EN_CX3_LOW_ID	0x1000
+@@ -366,10 +441,17 @@ struct mlx4_en_rx_ring {
+ 	u8  fcs_del;
+ 	void *buf;
+ 	void *rx_info;
++#ifdef HAVE_XDP_BUFF
+ 	struct bpf_prog __rcu *xdp_prog;
++#endif
+ 	struct mlx4_en_page_cache page_cache;
+ 	unsigned long bytes;
+ 	unsigned long packets;
++#ifdef MLX4_EN_BUSY_POLL
++	unsigned long yields;
++	unsigned long misses;
++	unsigned long cleaned;
++#endif
+ 	unsigned long csum_ok;
+ 	unsigned long csum_none;
+ 	unsigned long csum_complete;
+@@ -381,7 +463,12 @@ struct mlx4_en_rx_ring {
+ 	unsigned long dropped;
+ 	int hwtstamp_rx_filter;
+ 	cpumask_var_t affinity_mask;
++#ifdef HAVE_NET_XDP_H
+ 	struct xdp_rxq_info xdp_rxq;
++#endif
++#ifdef CONFIG_COMPAT_LRO_ENABLED
++	struct mlx4_en_lro lro;
++#endif
+ };
+ 
+ struct mlx4_en_cq {
+@@ -401,7 +488,22 @@ struct mlx4_en_cq {
+ 	u16 moder_cnt;
+ 	struct mlx4_cqe *buf;
+ #define MLX4_EN_OPCODE_ERROR	0x1e
++#if !(defined(HAVE_IRQ_DESC_GET_IRQ_DATA) && defined(HAVE_IRQ_TO_DESC_EXPORTED))
++	u32 tot_rx;
++#endif
+ 
++#ifdef MLX4_EN_BUSY_POLL
++	unsigned int state;
++#define MLX4_EN_CQ_STATE_IDLE     0
++#define MLX4_EN_CQ_STATE_NAPI     1    /* NAPI owns this CQ */
++#define MLX4_EN_CQ_STATE_POLL     2    /* poll owns this CQ */
++#define MLX4_CQ_LOCKED (MLX4_EN_CQ_STATE_NAPI | MLX4_EN_CQ_STATE_POLL)
++#define MLX4_EN_CQ_STATE_NAPI_YIELD  4    /* NAPI yielded this CQ */
++#define MLX4_EN_CQ_STATE_POLL_YIELD  8    /* poll yielded this CQ */
++#define CQ_YIELD (MLX4_EN_CQ_STATE_NAPI_YIELD | MLX4_EN_CQ_STATE_POLL_YIELD)
++#define CQ_USER_PEND (MLX4_EN_CQ_STATE_POLL | MLX4_EN_CQ_STATE_POLL_YIELD)
++	spinlock_t poll_lock; /* protects from LLS/napi conflicts */
++#endif
+ 	struct irq_desc *irq_desc;
+ };
+ 
+@@ -456,8 +558,10 @@ struct mlx4_en_dev {
+ 	seqlock_t		clock_lock;
+ 	struct timecounter	clock;
+ 	unsigned long		last_overflow_check;
++#if defined (HAVE_PTP_CLOCK_INFO) && (defined(CONFIG_PTP_1588_CLOCK) || defined(CONFIG_PTP_1588_CLOCK_MODULE))
+ 	struct ptp_clock	*ptp_clock;
+ 	struct ptp_clock_info	ptp_clock_info;
++#endif
+ 	struct notifier_block	nb;
+ };
+ 
+@@ -580,7 +684,13 @@ struct mlx4_en_priv {
+ 	struct mlx4_en_port_profile *prof;
+ 	struct net_device *dev;
+ 	struct net_device_ops dev_ops;
++#ifdef MLX4_EN_VLGRP
++	struct vlan_group *vlgrp;
++#endif
+ 	unsigned long active_vlans[BITS_TO_LONGS(VLAN_N_VID)];
++#ifndef HAVE_NDO_GET_STATS64
++	struct net_device_stats ret_stats;
++#endif
+ 	struct mlx4_en_port_state port_state;
+ 	spinlock_t stats_lock;
+ 	struct ethtool_flow_id ethtool_rules[MAX_NUM_OF_FS_RULES];
+@@ -672,6 +782,7 @@ struct mlx4_en_priv {
+ 	u32 counter_index;
+ 	struct en_port *vf_ports[MLX4_MAX_NUM_VF];
+ 
++#ifndef CONFIG_COMPAT_DISABLE_DCB
+ #ifdef CONFIG_MLX4_EN_DCB
+ #define MLX4_EN_DCB_ENABLED	0x3
+ 	struct ieee_ets ets;
+@@ -680,6 +791,7 @@ struct mlx4_en_priv {
+ 	struct mlx4_en_cee_config cee_config;
+ 	u8 dcbx_cap;
+ #endif
++#endif
+ #ifdef CONFIG_RFS_ACCEL
+ 	spinlock_t filters_lock;
+ 	int last_filter_id;
+@@ -689,6 +801,12 @@ struct mlx4_en_priv {
+ 	u64 tunnel_reg_id;
+ 	__be16 vxlan_port;
+ 
++#ifdef CONFIG_COMPAT_EN_SYSFS
++	int sysfs_group_initialized;
++#endif
++#ifdef CONFIG_SYSFS_FDB
++	int sysfs_fdb_created;
++#endif
+ 	u32 pflags;
+ 	u8 rss_key[MLX4_EN_RSS_KEY_SIZE];
+ 	u8 rss_hash_fn;
+@@ -713,9 +831,122 @@ static inline struct mlx4_cqe *mlx4_en_g
+ 	return buf + idx * cqe_sz;
+ }
+ 
++#ifdef MLX4_EN_BUSY_POLL
++static inline void mlx4_en_cq_init_lock(struct mlx4_en_cq *cq)
++{
++	spin_lock_init(&cq->poll_lock);
++	cq->state = MLX4_EN_CQ_STATE_IDLE;
++}
++
++/* called from the device poll rutine to get ownership of a cq */
++static inline bool mlx4_en_cq_lock_napi(struct mlx4_en_cq *cq)
++{
++	int rc = true;
++	spin_lock(&cq->poll_lock);
++	if (cq->state & MLX4_CQ_LOCKED) {
++		WARN_ON(cq->state & MLX4_EN_CQ_STATE_NAPI);
++		cq->state |= MLX4_EN_CQ_STATE_NAPI_YIELD;
++		rc = false;
++	} else
++		/* we don't care if someone yielded */
++		cq->state = MLX4_EN_CQ_STATE_NAPI;
++	spin_unlock(&cq->poll_lock);
++	return rc;
++}
++
++/* returns true is someone tried to get the cq while napi had it */
++static inline bool mlx4_en_cq_unlock_napi(struct mlx4_en_cq *cq)
++{
++	int rc = false;
++	spin_lock(&cq->poll_lock);
++	WARN_ON(cq->state & (MLX4_EN_CQ_STATE_POLL |
++			       MLX4_EN_CQ_STATE_NAPI_YIELD));
++
++	if (cq->state & MLX4_EN_CQ_STATE_POLL_YIELD)
++		rc = true;
++	cq->state = MLX4_EN_CQ_STATE_IDLE;
++	spin_unlock(&cq->poll_lock);
++	return rc;
++}
++
++/* called from mlx4_en_low_latency_recv(), BH are disabled */
++static inline bool mlx4_en_cq_lock_poll(struct mlx4_en_cq *cq)
++{
++	int rc = true;
++
++	spin_lock(&cq->poll_lock);
++	if ((cq->state & MLX4_CQ_LOCKED)) {
++		struct net_device *dev = cq->dev;
++		struct mlx4_en_priv *priv = netdev_priv(dev);
++		struct mlx4_en_rx_ring *rx_ring = priv->rx_ring[cq->ring];
++
++		cq->state |= MLX4_EN_CQ_STATE_POLL_YIELD;
++		rc = false;
++		rx_ring->yields++;
++	} else
++		/* preserve yield marks */
++		cq->state |= MLX4_EN_CQ_STATE_POLL;
++	spin_unlock(&cq->poll_lock);
++	return rc;
++}
++
++/* returns true if someone tried to get the cq while it was locked */
++static inline bool mlx4_en_cq_unlock_poll(struct mlx4_en_cq *cq)
++{
++	int rc = false;
++
++	spin_lock(&cq->poll_lock);
++	WARN_ON(cq->state & (MLX4_EN_CQ_STATE_NAPI));
++
++	if (cq->state & MLX4_EN_CQ_STATE_POLL_YIELD)
++		rc = true;
++	cq->state = MLX4_EN_CQ_STATE_IDLE;
++	spin_unlock(&cq->poll_lock);
++	return rc;
++}
++
++/* true if a socket is polling, even if it did not get the lock */
++static inline bool mlx4_en_cq_busy_polling(struct mlx4_en_cq *cq)
++{
++	WARN_ON(!(cq->state & MLX4_CQ_LOCKED));
++	return cq->state & CQ_USER_PEND;
++}
++#else
++static inline void mlx4_en_cq_init_lock(struct mlx4_en_cq *cq)
++{
++}
++
++static inline bool mlx4_en_cq_lock_napi(struct mlx4_en_cq *cq)
++{
++	return true;
++}
++
++static inline bool mlx4_en_cq_unlock_napi(struct mlx4_en_cq *cq)
++{
++	return false;
++}
++
++static inline bool mlx4_en_cq_lock_poll(struct mlx4_en_cq *cq)
++{
++	return false;
++}
++
++static inline bool mlx4_en_cq_unlock_poll(struct mlx4_en_cq *cq)
++{
++	return false;
++}
++
++static inline bool mlx4_en_cq_busy_polling(struct mlx4_en_cq *cq)
++{
++	return false;
++}
++#endif /* MLX4_EN_BUSY_POLL */
++
+ #define MLX4_EN_WOL_DO_MODIFY (1ULL << 63)
+ 
++#ifdef HAVE_ETHTOOL_xLINKSETTINGS
+ void mlx4_en_init_ptys2ethtool_map(void);
++#endif
+ void mlx4_en_update_loopback_state(struct net_device *dev,
+ 				   netdev_features_t features);
+ 
+@@ -739,8 +970,12 @@ void mlx4_en_set_stats_bitmap(struct mlx
+ 
+ int mlx4_en_try_alloc_resources(struct mlx4_en_priv *priv,
+ 				struct mlx4_en_priv *tmp,
++#ifdef HAVE_XDP_BUFF
+ 				struct mlx4_en_port_profile *prof,
+ 				bool carry_xdp_prog);
++#else
++				struct mlx4_en_port_profile *prof);
++#endif
+ void mlx4_en_safe_replace_resources(struct mlx4_en_priv *priv,
+ 				    struct mlx4_en_priv *tmp);
+ 
+@@ -754,14 +989,33 @@ int mlx4_en_set_cq_moder(struct mlx4_en_
+ void mlx4_en_arm_cq(struct mlx4_en_priv *priv, struct mlx4_en_cq *cq);
+ 
+ void mlx4_en_tx_irq(struct mlx4_cq *mcq);
++#ifdef NDO_SELECT_QUEUE_HAS_3_PARMS_NO_FALLBACK
+ u16 mlx4_en_select_queue(struct net_device *dev, struct sk_buff *skb,
+ 			 struct net_device *sb_dev);
++#elif defined(NDO_SELECT_QUEUE_HAS_ACCEL_PRIV) || defined(HAVE_SELECT_QUEUE_FALLBACK_T)
++
++u16 mlx4_en_select_queue(struct net_device *dev, struct sk_buff *skb,
++#ifdef HAVE_SELECT_QUEUE_FALLBACK_T
++#ifdef HAVE_SELECT_QUEUE_NET_DEVICE
++		       struct net_device *sb_dev,
++#else
++		       void *accel_priv,
++#endif /* HAVE_SELECT_QUEUE_NET_DEVICE */
++		       select_queue_fallback_t fallback);
++#else
++		       void *accel_priv);
++#endif
++#else /* NDO_SELECT_QUEUE_HAS_ACCEL_PRIV || HAVE_SELECT_QUEUE_FALLBACK_T */
++u16 mlx4_en_select_queue(struct net_device *dev, struct sk_buff *skb);
++#endif /* HAVE_3_PARAMS_FOR_NDO_SELECT_QUEUE */
+ netdev_tx_t mlx4_en_xmit(struct sk_buff *skb, struct net_device *dev);
+ netdev_tx_t mlx4_en_vgtp_xmit(struct sk_buff *skb, struct net_device *dev);
++#ifdef HAVE_XDP_BUFF
+ netdev_tx_t mlx4_en_xmit_frame(struct mlx4_en_rx_ring *rx_ring,
+ 			       struct mlx4_en_rx_alloc *frame,
+ 			       struct mlx4_en_priv *priv, unsigned int length,
+ 			       int tx_ind, bool *doorbell_pending);
++#endif
+ void mlx4_en_xmit_doorbell(struct mlx4_en_tx_ring *ring);
+ bool mlx4_en_rx_recycle(struct mlx4_en_rx_ring *ring,
+ 			struct mlx4_en_rx_alloc *frame);
+@@ -832,17 +1086,62 @@ void mlx4_en_fold_software_stats(struct
+ int mlx4_en_DUMP_ETH_STATS(struct mlx4_en_dev *mdev, u8 port, u8 reset);
+ int mlx4_en_QUERY_PORT(struct mlx4_en_dev *mdev, u8 port);
+ 
++#ifndef CONFIG_COMPAT_DISABLE_DCB
+ #ifdef CONFIG_MLX4_EN_DCB
+ extern const struct dcbnl_rtnl_ops mlx4_en_dcbnl_ops;
++#ifdef HAVE_DCBNL_RTNL_OPS_EXTENDED
++extern const struct dcbnl_rtnl_ops_ext mlx4_en_dcbnl_ops_ext;
++#endif
+ extern const struct dcbnl_rtnl_ops mlx4_en_dcbnl_pfc_ops;
+ #endif
++#endif
++
++#ifdef CONFIG_SYSFS_QCN
++int mlx4_en_dcbnl_ieee_getqcn(struct net_device *dev, struct ieee_qcn *qcn);
++int mlx4_en_dcbnl_ieee_setqcn(struct net_device *dev, struct ieee_qcn *qcn);
++int mlx4_en_dcbnl_ieee_getqcnstats(struct net_device *dev,
++				   struct ieee_qcn_stats *qcn_stats);
++#endif
++
++#ifdef CONFIG_COMPAT_EN_SYSFS
++int mlx4_en_sysfs_create(struct net_device *dev);
++void mlx4_en_sysfs_remove(struct net_device *dev);
++#endif
++
++#ifdef CONFIG_SYSFS_MAXRATE
++int mlx4_en_dcbnl_ieee_setmaxrate(struct net_device *dev,
++				  struct ieee_maxrate *maxrate);
++int mlx4_en_dcbnl_ieee_getmaxrate(struct net_device *dev,
++				  struct ieee_maxrate *maxrate);
++#endif
++
++#ifdef CONFIG_SYSFS_NUM_CHANNELS
++struct ethtool_channels {
++	__u32   cmd;
++	__u32   max_rx;
++	__u32   max_tx;
++	__u32   max_other;
++	__u32   max_combined;
++	__u32   rx_count;
++	__u32   tx_count;
++	__u32   other_count;
++	__u32   combined_count;
++};
++
++int mlx4_en_set_channels(struct net_device *dev,
++			 struct ethtool_channels *channel);
++void mlx4_en_get_channels(struct net_device *dev,
++			  struct ethtool_channels *channel);
++#endif
+ 
+ int mlx4_en_setup_tc(struct net_device *dev, u8 up);
+ int mlx4_en_alloc_tx_queue_per_tc(struct net_device *dev, u8 tc);
+ 
++#ifdef HAVE_NDO_RX_FLOW_STEER
+ #ifdef CONFIG_RFS_ACCEL
+ void mlx4_en_cleanup_filters(struct mlx4_en_priv *priv);
+ #endif
++#endif
+ 
+ #define MLX4_EN_NUM_SELF_TEST	5
+ void mlx4_en_ex_selftest(struct net_device *dev, u32 *flags, u64 *buf);
+@@ -858,8 +1157,10 @@ void mlx4_en_update_pfc_stats_bitmap(str
+ 				     struct mlx4_en_stats_bitmap *stats_bitmap,
+ 				     u8 rx_ppp, u8 rx_pause,
+ 				     u8 tx_ppp, u8 tx_pause);
++#ifdef HAVE_NETDEV_BONDING_INFO
+ int mlx4_en_netdev_event(struct notifier_block *this,
+ 			 unsigned long event, void *ptr);
++#endif
+ 
+ /*
+  * Functions for time stamping
+@@ -874,16 +1175,30 @@ void mlx4_en_remove_timestamp(struct mlx
+ /* Globals
+  */
+ extern const struct ethtool_ops mlx4_en_ethtool_ops;
+-
+-
++#ifdef HAVE_ETHTOOL_OPS_EXT
++extern const struct ethtool_ops_ext mlx4_en_ethtool_ops_ext;
++#endif
+ 
+ /*
+  * printk / logging functions
+  */
+ 
++#if !defined(HAVE_VA_FORMAT) || defined CONFIG_X86_XEN
++#define en_print(level, priv, format, arg...)                   \
++        do {                                                    \
++        if ((priv)->registered)                                 \
++                printk(level "%s: %s: " format, DRV_NAME,       \
++                        (priv->dev)->name, ## arg);             \
++        else                                                    \
++                printk(level "%s: %s: Port %d: " format,        \
++                        DRV_NAME, dev_name(&priv->mdev->pdev->dev), \
++                        (priv)->port, ## arg);                  \
++        } while(0) 
++#else
+ __printf(3, 4)
+ void en_print(const char *level, const struct mlx4_en_priv *priv,
+ 	      const char *format, ...);
++#endif
+ 
+ #define en_dbg(mlevel, priv, format, ...)				\
+ do {									\
+@@ -907,4 +1222,23 @@ do {									\
+ 	pr_warn(DRV_NAME " %s: " format,				\
+ 		dev_name(&(mdev)->pdev->dev), ##__VA_ARGS__)
+ 
++#ifdef CONFIG_SYSFS_INDIR_SETTING
++static inline u32 mlx4_en_get_rxfh_indir_size(struct net_device *dev)
++{
++	struct mlx4_en_priv *priv = netdev_priv(dev);
++
++	return priv->rx_ring_num;
++}
++
++int mlx4_en_get_rxfh_indir(struct net_device *dev, u32 *ring_index);
++int mlx4_en_set_rxfh_indir(struct net_device *dev, const u32 *ring_index);
++#endif
++#ifdef CONFIG_SYSFS_LOOPBACK
++int mlx4_en_set_features(struct net_device *netdev,
++#ifdef HAVE_NET_DEVICE_OPS_EXT
++			 u32 features);
++#else
++			 netdev_features_t features);
++#endif
++#endif
+ #endif

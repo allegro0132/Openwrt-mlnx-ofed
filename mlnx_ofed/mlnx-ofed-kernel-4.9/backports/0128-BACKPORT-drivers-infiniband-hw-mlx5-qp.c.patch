@@ -1,0 +1,29 @@
+From: Alaa Hleihel <alaa@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/hw/mlx5/qp.c
+
+Change-Id: I705864b495aed51567ef8b40e136c691efe0eef0
+---
+ drivers/infiniband/hw/mlx5/qp.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+--- a/drivers/infiniband/hw/mlx5/qp.c
++++ b/drivers/infiniband/hw/mlx5/qp.c
+@@ -7199,9 +7199,18 @@ static void handle_drain_completion(stru
+ 		if (triggered) {
+ 			/* Wait for any scheduled/running task to be ended */
+ 			switch (cq->poll_ctx) {
++#if IS_ENABLED(CONFIG_IRQ_POLL) || !defined(HAVE_IRQ_POLL_H)
+ 			case IB_POLL_SOFTIRQ:
++#if defined(HAVE_IRQ_POLL_H)
++#if IS_ENABLED(CONFIG_IRQ_POLL)
+ 				irq_poll_disable(&cq->iop);
+ 				irq_poll_enable(&cq->iop);
++#endif
++#else
++				blk_iopoll_disable(&cq->iop);
++				blk_iopoll_enable(&cq->iop);
++#endif
++#endif
+ 				break;
+ 			case IB_POLL_WORKQUEUE:
+ 				cancel_work_sync(&cq->work);

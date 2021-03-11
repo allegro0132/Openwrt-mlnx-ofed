@@ -1,0 +1,30 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/net/ethernet/mellanox/mlx4/cq.c
+
+Change-Id: I662b2a1adb9de32c21e70052786ca08cf509a906
+---
+ drivers/net/ethernet/mellanox/mlx4/cq.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+--- a/drivers/net/ethernet/mellanox/mlx4/cq.c
++++ b/drivers/net/ethernet/mellanox/mlx4/cq.c
+@@ -223,11 +223,19 @@ int __mlx4_cq_alloc_icm(struct mlx4_dev
+ 	if (*cqn == -1)
+ 		return -ENOMEM;
+ 
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 	err = mlx4_table_get(dev, &cq_table->table, *cqn);
++#else
++	err = mlx4_table_get(dev, &cq_table->table, *cqn, GFP_KERNEL);
++#endif
+ 	if (err)
+ 		goto err_out;
+ 
++#ifdef HAVE_MEMALLOC_NOIO_SAVE
+ 	err = mlx4_table_get(dev, &cq_table->cmpt_table, *cqn);
++#else
++	err = mlx4_table_get(dev, &cq_table->cmpt_table, *cqn, GFP_KERNEL);
++#endif
+ 	if (err)
+ 		goto err_put;
+ 	return 0;

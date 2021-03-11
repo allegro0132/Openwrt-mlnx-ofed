@@ -1,0 +1,270 @@
+From: Israel Rukshin <israelr@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/nvme/host/fc.c
+
+Change-Id: Id5a3d60331a15a46ea4e47b0da00b14a03e2135c
+---
+ drivers/nvme/host/fc.c | 117 ++++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 115 insertions(+), 2 deletions(-)
+
+--- a/drivers/nvme/host/fc.c
++++ b/drivers/nvme/host/fc.c
+@@ -2,6 +2,8 @@
+ /*
+  * Copyright (c) 2016 Avago Technologies.  All rights reserved.
+  */
++#ifdef HAVE_LINUX_NVME_FC_DRIVER_H
++
+ #ifdef pr_fmt
+ #undef pr_fmt
+ #endif
+@@ -1484,6 +1486,7 @@ __nvme_fc_exit_request(struct nvme_fc_ct
+ 	atomic_set(&op->state, FCPOP_STATE_UNINIT);
+ }
+ 
++#ifdef HAVE_BLK_MQ_OPS_EXIT_REQUEST_HAS_3_PARAMS
+ static void
+ nvme_fc_exit_request(struct blk_mq_tag_set *set, struct request *rq,
+ 		unsigned int hctx_idx)
+@@ -1492,6 +1495,16 @@ nvme_fc_exit_request(struct blk_mq_tag_s
+ 
+ 	return __nvme_fc_exit_request(set->driver_data, op);
+ }
++#else
++static void
++nvme_fc_exit_request(void *data, struct request *rq,
++		unsigned int hctx_idx, unsigned int rq_idx)
++{
++	struct nvme_fc_fcp_op *op = blk_mq_rq_to_pdu(rq);
++
++	__nvme_fc_exit_request(data, op);
++}
++#endif
+ 
+ static int
+ __nvme_fc_abort_op(struct nvme_fc_ctrl *ctrl, struct nvme_fc_fcp_op *op)
+@@ -1733,6 +1746,7 @@ out_on_error:
+ 	return ret;
+ }
+ 
++#ifdef HAVE_BLK_MQ_OPS_INIT_REQUEST_HAS_4_PARAMS
+ static int
+ nvme_fc_init_request(struct blk_mq_tag_set *set, struct request *rq,
+ 		unsigned int hctx_idx, unsigned int numa_node)
+@@ -1751,6 +1765,45 @@ nvme_fc_init_request(struct blk_mq_tag_s
+ 	nvme_req(rq)->ctrl = &ctrl->ctrl;
+ 	return res;
+ }
++#else
++static int
++nvme_fc_init_request(void *data, struct request *rq,
++		unsigned int hctx_idx, unsigned int rq_idx,
++		unsigned int numa_node)
++{
++	struct nvme_fc_ctrl *ctrl = data;
++	struct nvme_fcp_op_w_sgl *op = blk_mq_rq_to_pdu(rq);
++	struct nvme_fc_queue *queue = &ctrl->queues[hctx_idx+1];
++	int res;
++
++	res = __nvme_fc_init_request(ctrl, queue, &op->op, rq, queue->rqcnt++);
++	if (res)
++		return res;
++	op->op.fcp_req.first_sgl = &op->sgl[0];
++	op->op.fcp_req.private = &op->priv[0];
++	nvme_req(rq)->ctrl = &ctrl->ctrl;
++	return res;
++}
++
++static int
++nvme_fc_init_admin_request(void *data, struct request *rq,
++		unsigned int hctx_idx, unsigned int rq_idx,
++		unsigned int numa_node)
++{
++	struct nvme_fc_ctrl *ctrl = data;
++	struct nvme_fcp_op_w_sgl *op = blk_mq_rq_to_pdu(rq);
++	struct nvme_fc_queue *queue = &ctrl->queues[0];
++	int res;
++
++	res = __nvme_fc_init_request(ctrl, queue, &op->op, rq, queue->rqcnt++);
++	if (res)
++		return res;
++	op->op.fcp_req.first_sgl = &op->sgl[0];
++	op->op.fcp_req.private = &op->priv[0];
++	nvme_req(rq)->ctrl = &ctrl->ctrl;
++	return res;
++}
++#endif
+ 
+ static int
+ nvme_fc_init_aen_ops(struct nvme_fc_ctrl *ctrl)
+@@ -2002,7 +2055,11 @@ nvme_fc_ctrl_free(struct kref *ref)
+ 	list_del(&ctrl->ctrl_list);
+ 	spin_unlock_irqrestore(&ctrl->rport->lock, flags);
+ 
++#ifdef HAVE_BLK_MQ_UNQUIESCE_QUEUE
+ 	blk_mq_unquiesce_queue(ctrl->ctrl.admin_q);
++#else
++	blk_mq_start_stopped_hw_queues(ctrl->ctrl.admin_q, true);
++#endif
+ 	blk_cleanup_queue(ctrl->ctrl.admin_q);
+ 	blk_mq_free_tag_set(&ctrl->admin_tag_set);
+ 
+@@ -2114,9 +2171,18 @@ nvme_fc_map_data(struct nvme_fc_ctrl *ct
+ 		return 0;
+ 
+ 	freq->sg_table.sgl = freq->first_sgl;
++#ifdef HAVE_SG_ALLOC_TABLE_CHAINED_NENTS_FIRST_CHUNK_PARAM
+ 	ret = sg_alloc_table_chained(&freq->sg_table,
+ 			blk_rq_nr_phys_segments(rq), freq->sg_table.sgl,
+ 			SG_CHUNK_SIZE);
++#else
++	ret = sg_alloc_table_chained(&freq->sg_table,
++			blk_rq_nr_phys_segments(rq),
++#ifdef HAVE_SG_ALLOC_TABLE_CHAINED_4_PARAMS
++			GFP_ATOMIC,
++#endif
++			freq->sg_table.sgl);
++#endif
+ 	if (ret)
+ 		return -ENOMEM;
+ 
+@@ -2126,7 +2192,11 @@ nvme_fc_map_data(struct nvme_fc_ctrl *ct
+ 	freq->sg_cnt = fc_dma_map_sg(ctrl->lport->dev, freq->sg_table.sgl,
+ 				op->nents, dir);
+ 	if (unlikely(freq->sg_cnt <= 0)) {
++#ifdef HAVE_SG_ALLOC_TABLE_CHAINED_NENTS_FIRST_CHUNK_PARAM
+ 		sg_free_table_chained(&freq->sg_table, SG_CHUNK_SIZE);
++#else
++		sg_free_table_chained(&freq->sg_table, true);
++#endif
+ 		freq->sg_cnt = 0;
+ 		return -EFAULT;
+ 	}
+@@ -2152,7 +2222,11 @@ nvme_fc_unmap_data(struct nvme_fc_ctrl *
+ 
+ 	nvme_cleanup_cmd(rq);
+ 
++#ifdef HAVE_SG_ALLOC_TABLE_CHAINED_NENTS_FIRST_CHUNK_PARAM
+ 	sg_free_table_chained(&freq->sg_table, SG_CHUNK_SIZE);
++#else
++	sg_free_table_chained(&freq->sg_table, true);
++#endif
+ 
+ 	freq->sg_cnt = 0;
+ }
+@@ -2327,7 +2401,11 @@ nvme_fc_queue_rq(struct blk_mq_hw_ctx *h
+ 	 * physical segments, there is no payload.
+ 	 */
+ 	if (blk_rq_nr_phys_segments(rq)) {
++#ifdef HAVE_BLK_RQ_NR_PAYLOAD_BYTES
+ 		data_len = blk_rq_payload_bytes(rq);
++#else
++		data_len = nvme_map_len(rq);
++#endif
+ 		io_dir = ((rq_data_dir(rq) == WRITE) ?
+ 					NVMEFC_FCP_WRITE : NVMEFC_FCP_READ);
+ 	} else {
+@@ -2391,7 +2469,11 @@ nvme_fc_complete_rq(struct request *rq)
+  * status. The done path will return the io request back to the block
+  * layer with an error status.
+  */
++#ifdef HAVE_BLK_MQ_BUSY_TAG_ITER_FN_BOOL
+ static bool
++#else
++static void
++#endif
+ nvme_fc_terminate_exchange(struct request *req, void *data, bool reserved)
+ {
+ 	struct nvme_ctrl *nctrl = data;
+@@ -2399,11 +2481,16 @@ nvme_fc_terminate_exchange(struct reques
+ 	struct nvme_fc_fcp_op *op = blk_mq_rq_to_pdu(req);
+ 
+ 	__nvme_fc_abort_op(ctrl, op);
++#ifdef HAVE_BLK_MQ_BUSY_TAG_ITER_FN_BOOL
+ 	return true;
++#endif
+ }
+ 
+-
++#ifdef HAVE_BLK_MQ_TAG_SET_HAS_CONST_OPS
+ static const struct blk_mq_ops nvme_fc_mq_ops = {
++#else
++static struct blk_mq_ops nvme_fc_mq_ops = {
++#endif
+ 	.queue_rq	= nvme_fc_queue_rq,
+ 	.complete	= nvme_fc_complete_rq,
+ 	.init_request	= nvme_fc_init_request,
+@@ -2625,7 +2712,11 @@ nvme_fc_create_association(struct nvme_f
+ 	if (ret)
+ 		goto out_delete_hw_queue;
+ 
++#ifdef HAVE_BLK_MQ_UNQUIESCE_QUEUE
+ 	blk_mq_unquiesce_queue(ctrl->ctrl.admin_q);
++#else
++	blk_mq_start_stopped_hw_queues(ctrl->ctrl.admin_q, true);
++#endif
+ 
+ 	ret = nvmf_connect_admin_queue(&ctrl->ctrl);
+ 	if (ret)
+@@ -2789,7 +2880,11 @@ nvme_fc_delete_association(struct nvme_f
+ 	 * terminate the exchanges.
+ 	 */
+ 	nvme_stop_keep_alive(&ctrl->ctrl);
++#ifdef HAVE_BLK_MQ_UNQUIESCE_QUEUE
+ 	blk_mq_quiesce_queue(ctrl->ctrl.admin_q);
++#else
++	blk_mq_stop_hw_queues(ctrl->ctrl.admin_q);
++#endif
+ 	blk_mq_tagset_busy_iter(&ctrl->admin_tag_set,
+ 				nvme_fc_terminate_exchange, &ctrl->ctrl);
+ 	blk_mq_tagset_wait_completed_request(&ctrl->admin_tag_set);
+@@ -2823,7 +2918,11 @@ nvme_fc_delete_association(struct nvme_f
+ 	nvme_fc_free_queue(&ctrl->queues[0]);
+ 
+ 	/* re-enable the admin_q so anything new can fast fail */
++#ifdef HAVE_BLK_MQ_UNQUIESCE_QUEUE
+ 	blk_mq_unquiesce_queue(ctrl->ctrl.admin_q);
++#else
++	blk_mq_start_stopped_hw_queues(ctrl->ctrl.admin_q, true);
++#endif
+ 
+ 	/* resume the io queues so that things will fast fail */
+ 	nvme_start_queues(&ctrl->ctrl);
+@@ -2976,11 +3075,18 @@ nvme_fc_connect_ctrl_work(struct work_st
+ 			ctrl->cnum);
+ }
+ 
+-
++#ifdef HAVE_BLK_MQ_TAG_SET_HAS_CONST_OPS
+ static const struct blk_mq_ops nvme_fc_admin_mq_ops = {
++#else
++static struct blk_mq_ops nvme_fc_admin_mq_ops = {
++#endif
+ 	.queue_rq	= nvme_fc_queue_rq,
+ 	.complete	= nvme_fc_complete_rq,
++#ifdef HAVE_BLK_MQ_OPS_INIT_REQUEST_HAS_4_PARAMS
+ 	.init_request	= nvme_fc_init_request,
++#else
++	.init_request	= nvme_fc_init_admin_request,
++#endif
+ 	.exit_request	= nvme_fc_exit_request,
+ 	.init_hctx	= nvme_fc_init_admin_hctx,
+ 	.timeout	= nvme_fc_timeout,
+@@ -3099,7 +3205,9 @@ nvme_fc_init_ctrl(struct device *dev, st
+ 	ctrl->admin_tag_set.driver_data = ctrl;
+ 	ctrl->admin_tag_set.nr_hw_queues = 1;
+ 	ctrl->admin_tag_set.timeout = ADMIN_TIMEOUT;
++#ifdef HAVE_BLK_MQ_F_NO_SCHED
+ 	ctrl->admin_tag_set.flags = BLK_MQ_F_NO_SCHED;
++#endif
+ 
+ 	ret = blk_mq_alloc_tag_set(&ctrl->admin_tag_set);
+ 	if (ret)
+@@ -3479,3 +3587,8 @@ module_init(nvme_fc_init_module);
+ module_exit(nvme_fc_exit_module);
+ 
+ MODULE_LICENSE("GPL v2");
++#ifdef RETPOLINE_MLNX
++MODULE_INFO(retpoline, "Y");
++#endif
++
++#endif /* HAVE_LINUX_NVME_FC_DRIVER_H */

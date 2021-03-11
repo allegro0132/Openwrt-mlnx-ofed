@@ -1,0 +1,44 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT: drivers/infiniband/core/cm.c
+
+Change-Id: I8bec3cb8a6df4aa561802b0d90115032524e0d21
+---
+ drivers/infiniband/core/cm.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+--- a/drivers/infiniband/core/cm.c
++++ b/drivers/infiniband/core/cm.c
+@@ -57,6 +57,9 @@
+ MODULE_AUTHOR("Sean Hefty");
+ MODULE_DESCRIPTION("InfiniBand CM");
+ MODULE_LICENSE("Dual BSD/GPL");
++#ifdef RETPOLINE_MLNX
++MODULE_INFO(retpoline, "Y");
++#endif
+ 
+ static const char * const ibcm_rej_reason_strs[] = {
+ 	[IB_CM_REJ_NO_QP]			= "no QP",
+@@ -4304,7 +4307,11 @@ static ssize_t cm_show_counter(struct ko
+ 		       atomic_long_read(&group->counter[cm_attr->index]));
+ }
+ 
++#ifdef CONFIG_COMPAT_IS_CONST_KOBJECT_SYSFS_OPS
+ static const struct sysfs_ops cm_counter_ops = {
++#else
++static struct sysfs_ops cm_counter_ops = {
++#endif
+ 	.show = cm_show_counter
+ };
+ 
+@@ -4313,7 +4320,11 @@ static struct kobj_type cm_counter_obj_t
+ 	.default_attrs = cm_counter_default_attrs
+ };
+ 
++#ifdef HAVE_CLASS_DEVNODE_UMODE_T
+ static char *cm_devnode(struct device *dev, umode_t *mode)
++#else
++static char *cm_devnode(struct device *dev, mode_t *mode)
++#endif
+ {
+ 	if (mode)
+ 		*mode = 0666;

@@ -1,0 +1,191 @@
+From: Talat Batheesh <talatb@mellanox.com>
+Subject: [PATCH] BACKPORT:
+ drivers/net/ethernet/mellanox/mlx5/core/ipoib/ethtool.c
+
+Change-Id: Iac85092722cbd511ebc052f401d4e3429e02730e
+---
+ .../ethernet/mellanox/mlx5/core/ipoib/ethtool.c    | 105 +++++++++++++++++++--
+ 1 file changed, 98 insertions(+), 7 deletions(-)
+
+--- a/drivers/net/ethernet/mellanox/mlx5/core/ipoib/ethtool.c
++++ b/drivers/net/ethernet/mellanox/mlx5/core/ipoib/ethtool.c
+@@ -82,6 +82,7 @@ static void mlx5i_get_ringparam(struct n
+ 	mlx5e_ethtool_get_ringparam(priv, param);
+ }
+ 
++#if defined(HAVE_GET_SET_CHANNELS) || defined(HAVE_GET_SET_CHANNELS_EXT)
+ static int mlx5i_set_channels(struct net_device *dev,
+ 			      struct ethtool_channels *ch)
+ {
+@@ -97,6 +98,7 @@ static void mlx5i_get_channels(struct ne
+ 
+ 	mlx5e_ethtool_get_channels(priv, ch);
+ }
++#endif
+ 
+ static int mlx5i_set_coalesce(struct net_device *netdev,
+ 			      struct ethtool_coalesce *coal)
+@@ -114,6 +116,7 @@ static int mlx5i_get_coalesce(struct net
+ 	return mlx5e_ethtool_get_coalesce(priv, coal);
+ }
+ 
++#ifdef HAVE_GET_TS_INFO
+ static int mlx5i_get_ts_info(struct net_device *netdev,
+ 			     struct ethtool_ts_info *info)
+ {
+@@ -121,6 +124,7 @@ static int mlx5i_get_ts_info(struct net_
+ 
+ 	return mlx5e_ethtool_get_ts_info(priv, info);
+ }
++#endif
+ 
+ static int mlx5i_flash_device(struct net_device *netdev,
+ 			      struct ethtool_flash *flash)
+@@ -206,6 +210,7 @@ static int mlx5i_get_speed_settings(u16
+ 	return rate * width;
+ }
+ 
++#ifdef HAVE_GET_SET_LINK_KSETTINGS
+ static int mlx5i_get_link_ksettings(struct net_device *netdev,
+ 				    struct ethtool_link_ksettings *link_ksettings)
+ {
+@@ -234,8 +239,8 @@ static int mlx5i_get_link_ksettings(stru
+ 	return 0;
+ }
+ 
+-/*
+- * Talat TODO Add it to Backports
++#endif
++#ifdef HAVE_ETHTOOL_GET_SET_SETTINGS
+ static int mlx5i_get_settings(struct net_device *netdev,
+ 			      struct ethtool_cmd *ecmd)
+ {
+@@ -254,7 +259,7 @@ static int mlx5i_get_settings(struct net
+ 		return -EINVAL;
+ 
+ 	ecmd->duplex = DUPLEX_FULL;
+-	ecmd->port = PORT_OTHER;// till define IB port type 
++	ecmd->port = PORT_OTHER;// FIXME: till define IB port type 
+ 	ecmd->phy_address = 255;
+ 	ecmd->autoneg = AUTONEG_DISABLE;
+ 
+@@ -262,7 +267,47 @@ static int mlx5i_get_settings(struct net
+ 
+ 	return 0;
+ }
+-*/
++#endif
++
++#ifndef HAVE_NETDEV_HW_FEATURES
++#if defined(HAVE_GET_SET_FLAGS) && defined(CONFIG_COMPAT_LRO_ENABLED_IPOIB)
++int mlx5i_set_flags(struct net_device *dev, u32 data)
++{
++	int hw_support_lro = 0;
++
++#ifdef HAVE_NETDEV_HW_FEATURES
++	hw_support_lro = dev->hw_features & NETIF_F_RXCSUM;
++#else
++	hw_support_lro = dev->features & NETIF_F_RXCSUM;
++#endif
++
++	if ((data & ETH_FLAG_LRO) && hw_support_lro)
++		dev->features |= NETIF_F_LRO;
++	else
++		dev->features &= ~NETIF_F_LRO;
++	return 0;
++}
++#endif
++
++#ifdef HAVE_GET_SET_TSO
++int mlx5i_set_tso(struct net_device *dev, u32 data)
++{
++	if (data)
++		dev->features |= (NETIF_F_TSO | NETIF_F_TSO6);
++	else
++		dev->features &= ~(NETIF_F_TSO | NETIF_F_TSO6);
++
++	return 0;
++}
++#endif
++#ifdef HAVE_GET_SET_RX_CSUM
++static u32 mlx5i_get_rx_csum(struct net_device *dev)
++{
++	return dev->features & NETIF_F_RXCSUM;
++}
++#endif
++#endif
++
+ const struct ethtool_ops mlx5i_ethtool_ops = {
+ 	.get_drvinfo        = mlx5i_get_drvinfo,
+ 	.get_strings        = mlx5i_get_strings,
+@@ -271,21 +316,67 @@ const struct ethtool_ops mlx5i_ethtool_o
+ 	.get_ringparam      = mlx5i_get_ringparam,
+ 	.set_ringparam      = mlx5i_set_ringparam,
+ 	.flash_device       = mlx5i_flash_device,
++#ifdef HAVE_GET_SET_CHANNELS
+ 	.get_channels       = mlx5i_get_channels,
+ 	.set_channels       = mlx5i_set_channels,
++#endif
+ 	.get_coalesce       = mlx5i_get_coalesce,
+ 	.set_coalesce       = mlx5i_set_coalesce,
++#ifdef HAVE_GET_TS_INFO
+ 	.get_ts_info        = mlx5i_get_ts_info,
++#endif
++#ifdef HAVE_GET_SET_LINK_KSETTINGS
+ 	.get_link_ksettings = mlx5i_get_link_ksettings,
++#endif
++#ifdef HAVE_ETHTOOL_GET_SET_SETTINGS
++	.get_settings       = mlx5i_get_settings,
++#endif
+ 	.get_link           = ethtool_op_get_link,
+-//	.get_settings       = mlx5i_get_settings,
+-	.get_ts_info        = mlx5i_get_ts_info,
++/* IPoIB current code supports HW_FEATURES and doesn't
++ * support EXTENDED_HW_FEATURES. If support for EXTENDED_HW_FEATURES
++ * is added then this code and the set function should be masked
++ *  with LEGACY_ETHTOOL_OPS.
++ */
++#ifndef HAVE_NETDEV_HW_FEATURES
++#ifdef HAVE_GET_SET_FLAGS
++#if defined (CONFIG_COMPAT_LRO_ENABLED_IPOIB)
++	.set_flags          = mlx5i_set_flags,
++#endif
++	.get_flags          = ethtool_op_get_flags,
++#endif
++#ifdef HAVE_GET_SET_TSO
++       .set_tso             = mlx5i_set_tso,
++#endif
++#ifdef HAVE_GET_SET_RX_CSUM
++	.get_rx_csum        = mlx5i_get_rx_csum,
++#endif
++#endif
+ };
+ 
+ const struct ethtool_ops mlx5i_pkey_ethtool_ops = {
+ 	.get_drvinfo        = mlx5i_get_drvinfo,
+ 	.get_link           = ethtool_op_get_link,
++#ifdef HAVE_GET_TS_INFO
+ 	.get_ts_info        = mlx5i_get_ts_info,
+-//	.get_settings	    = mlx5i_get_settings,
++#endif
++#ifdef HAVE_GET_SET_LINK_KSETTINGS
+ 	.get_link_ksettings = mlx5i_get_link_ksettings,
++#endif
++#ifdef HAVE_ETHTOOL_GET_SET_SETTINGS
++	.get_settings	    = mlx5i_get_settings,
++#endif
++};
++
++#ifdef HAVE_ETHTOOL_OPS_EXT
++const struct ethtool_ops_ext mlx5i_ethtool_ops_ext = {
++	.size			= sizeof(struct ethtool_ops_ext),
++#ifdef HAVE_GET_SET_CHANNELS_EXT
++	.get_channels		= mlx5i_get_channels,
++	.set_channels		= mlx5i_set_channels,
++#endif
++};
++
++const struct ethtool_ops_ext mlx5i_pkey_ethtool_ops_ext = {
++	.size			= sizeof(struct ethtool_ops_ext),
+ };
++#endif /* HAVE_ETHTOOL_OPS_EXT */
