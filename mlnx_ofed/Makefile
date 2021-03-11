@@ -59,15 +59,7 @@ mlnx_CFGOPTS= --kernel-version=$(LINUX_VERSION) \
 	--kernel-sources=$(LINUX_DIR) \
 	-j 8 \
 	--with-mlx4_en-mod --with-mlx5-core-and-en-mod --with-nfsrdma-mod --with-iser-mod --with-mlxfw-mod
-	#--with-linux=$(VERSION) kernel sources directory [/lib/modules/4.4.0-19041-Microsoft/source]
-	#--prefix=PREFIX  for userspace components [/usr]
-    #--build_root=BUILD_ROOT  root directory to build RPM packages
-    #--kernel-version=VERSION  make for this kernel [4.4.0-19041-Microsoft]
-    #--modules-dir=DIR  modules directory [/lib/modules/4.4.0-19041-Microsoft]
-    #--kernel-sources=DIR  make for this kernel [/lib/modules/4.4.0-19041-Microsoft/source]
-    #--with-linux-obj=DIR  kernel obj directory [/lib/modules/4.4.0-19041-Microsoft/build]
-    #--skip-autoconf
-    #-j[N]|--with-njobs=[N] : Allow N configure jobs at once; jobs as number of CPUs with no arg.
+#-j[N]|--with-njobs=[N] : Allow N configure jobs at once; jobs as number of CPUs with no arg.
 ##########################################################################
 #Kernel modules configuration:
 #
