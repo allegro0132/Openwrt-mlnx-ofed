@@ -15,7 +15,7 @@ PKG_BUILD_DIR:=$(KERNEL_BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
 
 include $(INCLUDE_DIR)/package.mk
 
-define Package/mlnx_ofed
+define KernelPackage/mlnx_ofed
   TITLE:=Mellanox ConnectX(R) mlx5 core Network Driver
   SUBMENU:=Network Devices
   VERSION:=$(LINUX_VERSION)+$(PKG_VERSION)-$(BOARD)-$(PKG_RELEASE)
