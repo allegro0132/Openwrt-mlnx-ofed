@@ -47,7 +47,6 @@ static struct tc_mirred to_mirred_compat(const struct tc_action *a)
 	struct tc_mirred m = { .ifindex = 0 };
 	struct sk_buff *skb;
 	struct nlattr *nla;
-
 	//if (!a->ops || !a->ops->dump || !is_tcf_mirred_compat(a)) Modified as following
 	if (!a->ops || !is_tcf_mirred_compat(a))
 		return m;
@@ -55,7 +54,7 @@ static struct tc_mirred to_mirred_compat(const struct tc_action *a)
 	skb = alloc_skb(256, GFP_KERNEL);
 	if (!skb)
 		return m;
-
+	
 	//Annotated it for OpenWRT's compatibility
 	//if (a->ops->dump(skb, (struct tc_action *) a, 0, 0) < 0)
 	//	goto freeskb;
