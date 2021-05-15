@@ -16,7 +16,7 @@ PKG_BUILD_DIR:=$(KERNEL_BUILD_DIR)/$(PKG_NAME)-$(PKG_VERSION)
 include $(INCLUDE_DIR)/package.mk
 
 define KernelPackage/mlnx_ofed
-  TITLE:=Mellanox ConnectX(R) mlx5 core Network Driver
+  TITLE:=Mellanox ConnectX(R) mlx5 vpi Network Driver
   SUBMENU:=Network Devices
   VERSION:=$(LINUX_VERSION)+$(PKG_VERSION)-$(BOARD)-$(PKG_RELEASE)
   FILES:= `find $(PKG_BUILD_DIR)/ \( -name "*.ko" -o -name "*.ko.gz" \)`
@@ -24,7 +24,6 @@ define KernelPackage/mlnx_ofed
   KCONFIG:= CONFIG_MLX5_CORE \
 	CONFIG_MLX5_CORE_EN=y \
 	CONFIG_MLX5_CORE_EN_DCB=n \
-	CONFIG_MLX5_CORE_IPOIB=n \
 	CONFIG_MLX5_EN_ARFS=n \
 	CONFIG_MLX5_EN_IPSEC=n \
 	CONFIG_MLX5_EN_RXNFC=y \
@@ -36,13 +35,36 @@ define KernelPackage/mlnx_ofed
 	CONFIG_MLX5_MPFS=y \
 	CONFIG_MLX5_SW_STEERING=n \
 	CONFIG_MLX5_TC_CT=n \
-	CONFIG_MLX5_TLS=n
-  AUTOLOAD:=$(call AutoLoad,35,mlx5_core)
-  #AUTOLOAD:=$(call AutoProbe,"scsi_transport_srp.ko,mlx4_ib.ko,efa.ko,mlx5_ib.ko,iw_cm.ko,ib_core.ko,ib_cm.ko,rdma_cm.ko,rdma_ucm.ko,ib_ucm.ko,ib_umad.ko,ib_uverbs.ko,ib_ipoib.ko,ib_srp.ko,ib_iser.ko,mlx4_en.ko,mlx4_core.ko,mlx5_core.ko,mlx_compat.ko,`find $(PKG_BUILD_DIR)/ \( -name "*.ko" -o -name "*.ko.gz" \) | awk -F '/' '{print $NF}' | sed ':t;N;s/\n/,/;b t'`)
+	CONFIG_MLX5_TLS=n \
+	CONFIG_INFINIBAND=m \
+	CONFIG_INFINIBAND_IPOIB=m \
+	CONFIG_INFINIBAND_IPOIB_CM=y \
+	CONFIG_INFINIBAND_SRP=m \
+	CONFIG_INFINIBAND_USER_MAD=m \
+	CONFIG_INFINIBAND_USER_ACCESS=m \
+	CONFIG_INFINIBAND_USER_ACCESS_UCM=m \
+	CONFIG_INFINIBAND_ADDR_TRANS=y \
+	CONFIG_INFINIBAND_USER_MEM=y \
+	CONFIG_MLX5_ACCEL=y \
+	CONFIG_MLX5_IPSEC=n \
+	CONFIG_MLX5_CORE=m \
+	CONFIG_MLX5_CLS_ACT=y \
+	CONFIG_MLX5_TC_SAMPLE=y \
+	CONFIG_MLX5_CORE_IPOIB=y \
+	CONFIG_MLX5_EN_SPECIAL_SQ=y \
+	CONFIG_MLX5_INFINIBAND=m \
+	CONFIG_MLX5_DEBUG=y \
+	CONFIG_BACKPORT_LRO=m \
+	CONFIG_AUXILIARY_BUS=m \
+	CONFIG_INFINIBAND_IPOIB_DEBUG=y \
+	CONFIG_SCSI_SRP_ATTRS=m \
+	CONFIG_INFINIBAND_ON_DEMAND_PAGING=y
+  AUTOLOAD:=$(call AutoLoad,35,mlx5_core mlx4_core ib_ipoib)
+  #AUTOLOAD:=$(call AutoProbe,35,scsi_transport_srp.ko mlx4_ib.ko efa.ko mlx5_ib.ko iw_cm.ko ib_core.ko ib_cm.ko rdma_cm.ko rdma_ucm.ko ib_ucm.ko ib_umad.ko ib_uverbs.ko ib_ipoib.ko ib_srp.ko ib_iser.ko mlx4_en.ko mlx4_core.ko mlx5_core.ko mlx_compat.ko)
 endef
 
 define Package/mlnx_ofed/description
- This package contains a OFED driver for Mellanox CX4 chipsets.
+ This package contains a OFED driver for Mellanox CX3 and above chipsets.
 endef
 
 mlnx_MAKEOPTS= PATH="$(TARGET_PATH)" \
@@ -58,7 +80,7 @@ mlnx_CFGOPTS= --kernel-version=$(LINUX_VERSION) \
 	--with-linux=$(LINUX_DIR) \
 	--kernel-sources=$(LINUX_DIR) \
 	-j 8 \
-	--with-mlx4_en-mod --with-mlx5-core-and-en-mod --with-nfsrdma-mod --with-iser-mod --with-mlxfw-mod
+	--with-core-mod --with-user_mad-mod --with-user_access-mod --with-addr_trans-mod --with-mlx5-mod --with-ipoib-mod --with-srp-mod --with-mlx4_en-mod --with-mlx4-mod
 #-j[N]|--with-njobs=[N] : Allow N configure jobs at once; jobs as number of CPUs with no arg.
 ##########################################################################
 #Kernel modules configuration:
@@ -208,7 +230,7 @@ mlnx_CFGOPTS= --kernel-version=$(LINUX_VERSION) \
 define Build/Prepare
 	mkdir -p $(PKG_BUILD_DIR)
 	$(CP) ./mlnx-ofed-kernel-4.9 $(PKG_BUILD_DIR)
-	#$(TAR) -C $(PKG_BUILD_DIR) -zxvf ./mlnx-ofed-kernel_4*.tar.gz
+	#$(TAR) -C $(PKG_BUILD_DIR) -zxvf ./mlnx-ofed-kernel_5*.tar.gz
 endef
 
 define Build/Compile
