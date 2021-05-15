@@ -28,7 +28,7 @@ git clone https://github.com/allegro0132/Openwrt-mlnx-ofed.git
  3. 一点优化(可选)
   由于compat与mlx_compat存在冲突，ath系列和rx2x00系列驱动无法安装，并会在开机时产生如下报错
  ```
- kmodloader: 15modules could not be probed
+ kmodloader: 15 modules could not be probed
  ```
  可以按照如下次序取消选择kmod，让开机界面清爽一些：
 ```
