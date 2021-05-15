@@ -3,16 +3,16 @@
 * 该项目为OpenWRT源码包，在编译过程中选中以集成最新版本MLNX_OFED驱动。本源码包默认提供MLNX_OFED 4.9版本驱动，同时支持cx3，cx4及之后的Mellanox网卡。本项目开发目的如下：
 
 * a) 增加IB网络支持
-* 通过安装本驱动，可以令你的OpenWRT路由器同时支持Infiniband和ETH网络，并能利用ipoib在ib网络上实现tcpip通信。本源码包正确编译运行后，输入
+通过安装本驱动，可以令你的OpenWRT路由器同时支持Infiniband和ETH网络，并能利用ipoib在ib网络上实现tcpip通信。本源码包正确编译运行后，输入
 ```bash
 ip address
 ```
-* 即可在输出中看到“ib0” ipoib网络适配器。
+即可在输出中看到“ib0” ipoib网络适配器。
 * b) 在IB子网与ETH子网间通信
-* 网络拓扑如下：外网通过eth接入wan端口，eth子网从lan端口接出，而ib子网从ib0端口输出。
-* 需要先在IB子网的一台机器上开启opensm服务程序（暂不支持Openwrt），然后给ib0适配器配置ip地址，并将lan与ib0置于防火墙的同一区域下。这时ib适配器可与lan侧的eth设备通信，同理也能和wan侧通信。ib子网将与原有的eth网络通过openwrt三层功能连在一起，从而自由的访问外网。
+网络拓扑如下：外网通过eth接入wan端口，eth子网从lan端口接出，而ib子网从ib0端口输出。
+需要先在IB子网的一台机器上开启opensm服务程序（暂不支持Openwrt），然后给ib0适配器配置ip地址，并将lan与ib0置于防火墙的同一区域下。这时ib适配器可与lan侧的eth设备通信，同理也能和wan侧通信。ib子网将与原有的eth网络通过openwrt三层功能连在一起，从而自由的访问外网。
 * c) 增强SRIOV兼容性
-* 在虚拟机宿主开启SRIOV功能，并将VF直通进入OpenWRT虚拟机，能达到极佳的网友性能。但是OpenWRT集成的Mellanox系列网卡驱动，会在这种应用场景下无限重启，使用本源码包替代原有的mlx4，mlx5驱动，便能解决这一问题。
+在虚拟机宿主开启SRIOV功能，并将VF直通进入OpenWRT虚拟机，能达到极佳的网友性能。但是OpenWRT集成的Mellanox系列网卡驱动，会在这种应用场景下无限重启，使用本源码包替代原有的mlx4，mlx5驱动，便能解决这一问题。
 
 使用方法：
 
